@@ -1,0 +1,774 @@
+// ============================================================
+// Pattern Tiler - v1.1
+// Para usar con el plugin "obs-shaderfilter" de Exeldro
+// https://github.com/exeldro/obs-shaderfilter
+//
+// Inspirado en "OBS Shader - StreamUP Pattern Tiler" por Andilippi
+// https://andilippi.co.uk
+//
+// Proyecto personal asistido por IA para LaViduka.
+//
+// Instalacion: Anadir como Effect Filter sobre un Colour Source,
+// activar "Load shader text from file" o pegar este texto,
+// y pulsar "Reload effect" tras cada cambio.
+// ============================================================
+
+uniform float4x4 ViewProj;
+uniform texture2d image;
+
+uniform float elapsed_time;
+uniform float2 uv_size;
+
+sampler_state textureSampler {
+    Filter    = Linear;
+    AddressU  = Clamp;
+    AddressV  = Clamp;
+};
+
+sampler_state imageSampler {
+    Filter    = Linear;
+    AddressU  = Clamp;
+    AddressV  = Clamp;
+};
+
+struct VertData {
+    float4 pos : POSITION;
+    float2 uv  : TEXCOORD0;
+};
+
+VertData VSDefault(VertData v_in)
+{
+    VertData vert_out;
+    vert_out.pos = mul(float4(v_in.pos.xyz, 1.0), ViewProj);
+    vert_out.uv  = v_in.uv;
+    return vert_out;
+}
+
+// ============================================================
+// 1. REJILLA
+// ============================================================
+
+uniform int grid_pattern
+<
+    string label = "Patron de Rejilla";
+    string widget_type = "select";
+    int option_0_value = 0;  string option_0_label = "Cuadricula";
+    int option_1_value = 1;  string option_1_label = "Brick";
+    int option_2_value = 2;  string option_2_label = "Hexagonal";
+> = 0;
+
+uniform float density
+<
+    string label = "Densidad del grid";
+    string widget_type = "slider";
+    float minimum = 2.0;
+    float maximum = 200.0;
+    float step = 1.0;
+> = 20.0;
+
+uniform int square_cells
+<
+    string label = "Celdas Cuadradas";
+    string widget_type = "select";
+    int option_0_value = 0;  string option_0_label = "No";
+    int option_1_value = 1;  string option_1_label = "Si";
+> = 0;
+
+uniform float gap
+<
+    string label = "Espaciado interior de celda";
+    string widget_type = "slider";
+    float minimum = 0.0;
+    float maximum = 0.95;
+    float step = 0.01;
+> = 0.0;
+
+// ============================================================
+// 2. FORMA PRINCIPAL
+// ============================================================
+
+uniform int shape_type
+<
+    string label = "Forma";
+    string widget_type = "select";
+    int option_0_value = 0;  string option_0_label = "Dot";
+    int option_1_value = 1;  string option_1_label = "Ring";
+    int option_2_value = 2;  string option_2_label = "Square";
+    int option_3_value = 3;  string option_3_label = "Diamond";
+    int option_4_value = 4;  string option_4_label = "Plus";
+    int option_5_value = 5;  string option_5_label = "Polygon";
+    int option_6_value = 6;  string option_6_label = "Star";
+    int option_7_value = 7;  string option_7_label = "Image / OBS Source";
+    int option_8_value = 8;  string option_8_label = "Character (Atlas)";
+> = 0;
+
+uniform float shape_size
+<
+    string label = "Tamano";
+    string widget_type = "slider";
+    float minimum = 0.0;
+    float maximum = 1.0;
+    float step = 0.01;
+> = 0.5;
+
+uniform float edge_softness
+<
+    string label = "Suavizado de Borde";
+    string widget_type = "slider";
+    float minimum = 0.0;
+    float maximum = 0.2;
+    float step = 0.001;
+> = 0.02;
+
+uniform float rotation_deg
+<
+    string label = "Rotacion (grados)";
+    string widget_type = "slider";
+    float minimum = -180.0;
+    float maximum = 180.0;
+    float step = 1.0;
+> = 0.0;
+
+uniform float auto_rotate_speed
+<
+    string label = "Velocidad de Auto-Rotacion";
+    string widget_type = "slider";
+    float minimum = -180.0;
+    float maximum = 180.0;
+    float step = 1.0;
+> = 0.0;
+
+uniform int shape_sides
+<
+    string label = "Lados / Puntas";
+    string widget_type = "slider";
+    int minimum = 3;
+    int maximum = 12;
+    int step = 1;
+> = 5;
+
+uniform float star_sharpness
+<
+    string label = "Nitidez de Estrella";
+    string widget_type = "slider";
+    float minimum = 2.0;
+    float maximum = 12.0;
+    float step = 0.1;
+> = 3.0;
+
+// ============================================================
+// 3. MEZCLA DE FORMAS
+// ============================================================
+
+uniform int shape_type_b
+<
+    string label = "Forma B";
+    string widget_type = "select";
+    int option_0_value = 0;  string option_0_label = "Dot";
+    int option_1_value = 1;  string option_1_label = "Ring";
+    int option_2_value = 2;  string option_2_label = "Square";
+    int option_3_value = 3;  string option_3_label = "Diamond";
+    int option_4_value = 4;  string option_4_label = "Plus";
+    int option_5_value = 5;  string option_5_label = "Polygon";
+    int option_6_value = 6;  string option_6_label = "Star";
+    int option_7_value = 7;  string option_7_label = "Image / OBS Source";
+    int option_8_value = 8;  string option_8_label = "Character (Atlas)";
+> = 6;
+
+uniform float shape_mix_chance
+<
+    string label = "Probabilidad de Mezcla";
+    string widget_type = "slider";
+    float minimum = 0.0;
+    float maximum = 1.0;
+    float step = 0.01;
+> = 0.0;
+
+// ============================================================
+// 4. IMAGEN / FUENTE OBS
+// ============================================================
+
+uniform int use_source_instead_of_image
+<
+    string label = "Modo de textura";
+    string widget_type = "select";
+    int option_0_value = 0;  string option_0_label = "Imagen";
+    int option_1_value = 1;  string option_1_label = "Fuente OBS";
+> = 1;
+
+uniform texture2d source_tex
+<
+    string label = "Fuente OBS / Escena";
+    string widget_type = "source";
+>;
+
+uniform texture2d image_tex
+<
+    string label = "Imagen / Textura";
+    string widget_type = "file";
+>;
+
+uniform float image_aspect_override
+<
+    string label = "Aspecto de Imagen/Source (0=auto)";
+    string widget_type = "slider";
+    float minimum = 0.0;
+    float maximum = 5.0;
+    float step = 0.01;
+> = 0.0;
+
+// ============================================================
+// 5. ATLAS DE CARACTERES
+// ============================================================
+
+uniform texture2d font_atlas
+<
+    string label = "Atlas de Fuente (cuadricula PNG)";
+    string widget_type = "file";
+>;
+
+uniform int font_cols
+<
+    string label = "Columnas del Atlas";
+    string widget_type = "slider";
+    int minimum = 1;
+    int maximum = 32;
+    int step = 1;
+> = 16;
+
+uniform int font_rows
+<
+    string label = "Filas del Atlas";
+    string widget_type = "slider";
+    int minimum = 1;
+    int maximum = 32;
+    int step = 1;
+> = 16;
+
+uniform int font_index
+<
+    string label = "Indice de Caracter";
+    string widget_type = "slider";
+    int minimum = 0;
+    int maximum = 1023;
+    int step = 1;
+> = 0;
+
+uniform float font_aspect_override
+<
+    string label = "Aspecto del Caracter (0=auto)";
+    string widget_type = "slider";
+    float minimum = 0.0;
+    float maximum = 5.0;
+    float step = 0.01;
+> = 0.0;
+
+// ============================================================
+// 6. COLOR
+// ============================================================
+
+uniform float4 base_color
+<
+    string label = "Color Base";
+    string widget_type = "color";
+> = {1.0, 1.0, 1.0, 1.0};
+
+uniform float4 secondary_color
+<
+    string label = "Color Secundario";
+    string widget_type = "color";
+> = {1.0, 0.0, 0.0, 1.0};
+
+uniform int color_mode
+<
+    string label = "Modo de Color Secundario";
+    string widget_type = "select";
+    int option_0_value = 0;  string option_0_label = "Solido";
+    int option_1_value = 1;  string option_1_label = "Gradiente Radial";
+    int option_2_value = 2;  string option_2_label = "Alternado por Celda";
+    int option_3_value = 3;  string option_3_label = "Por Forma (A=base, B=secundario)";
+> = 0;
+
+uniform float color_mix
+<
+    string label = "Mezcla Color Secundario";
+    string widget_type = "slider";
+    float minimum = 0.0;
+    float maximum = 1.0;
+    float step = 0.01;
+> = 0.0;
+
+// ============================================================
+// 7. VARIACION POR CELDA
+// ============================================================
+
+uniform float visibility_chance
+<
+    string label = "Probabilidad de Visibilidad";
+    string widget_type = "slider";
+    float minimum = 0.0;
+    float maximum = 1.0;
+    float step = 0.01;
+> = 1.0;
+
+uniform float size_variation
+<
+    string label = "Variacion de Tamano";
+    string widget_type = "slider";
+    float minimum = 0.0;
+    float maximum = 1.0;
+    float step = 0.01;
+> = 0.0;
+
+uniform float rotation_variation
+<
+    string label = "Variacion de Rotacion";
+    string widget_type = "slider";
+    float minimum = 0.0;
+    float maximum = 180.0;
+    float step = 1.0;
+> = 0.0;
+
+uniform float hue_variation
+<
+    string label = "Variacion de Tono";
+    string widget_type = "slider";
+    float minimum = 0.0;
+    float maximum = 1.0;
+    float step = 0.01;
+> = 0.0;
+
+uniform float twinkle_amount
+<
+    string label = "Intensidad de Parpadeo";
+    string widget_type = "slider";
+    float minimum = 0.0;
+    float maximum = 1.0;
+    float step = 0.01;
+> = 0.0;
+
+uniform float twinkle_speed
+<
+    string label = "Velocidad de Parpadeo";
+    string widget_type = "slider";
+    float minimum = 0.0;
+    float maximum = 10.0;
+    float step = 0.1;
+> = 1.0;
+
+// ============================================================
+// 8. MOVIMIENTO
+// ============================================================
+
+uniform float2 scroll_speed
+<
+    string label = "Desplazamiento X,Y";
+> = {0.0, 0.0};
+
+uniform float2 scroll_offset
+<
+    string label = "Offset de desplazamiento X,Y";
+> = {0.0, 0.0};
+
+uniform float drift_amount
+<
+    string label = "Cantidad de Deriva";
+    string widget_type = "slider";
+    float minimum = 0.0;
+    float maximum = 1.0;
+    float step = 0.01;
+> = 0.0;
+
+uniform float drift_speed
+<
+    string label = "Velocidad de Deriva";
+    string widget_type = "slider";
+    float minimum = 0.0;
+    float maximum = 10.0;
+    float step = 0.1;
+> = 1.0;
+
+uniform float pulse_amount
+<
+    string label = "Intensidad de Pulso";
+    string widget_type = "slider";
+    float minimum = 0.0;
+    float maximum = 1.0;
+    float step = 0.01;
+> = 0.0;
+
+uniform float pulse_speed
+<
+    string label = "Velocidad de Pulso";
+    string widget_type = "slider";
+    float minimum = 0.0;
+    float maximum = 10.0;
+    float step = 0.1;
+> = 1.0;
+
+// ============================================================
+// Utilidades
+// ============================================================
+
+float2 hash2(float2 p)
+{
+    p = float2(dot(p, float2(127.1, 311.7)), dot(p, float2(269.5, 183.3)));
+    return frac(sin(p) * 43758.5453123);
+}
+
+float hash1(float2 p)
+{
+    return hash2(p).x;
+}
+
+float2 rotate2D(float2 p, float angle_rad)
+{
+    float s = sin(angle_rad);
+    float c = cos(angle_rad);
+    return float2(p.x * c - p.y * s, p.x * s + p.y * c);
+}
+
+float sdPolygon(float2 p, int n)
+{
+    float a = atan2(p.x, p.y) + 3.14159265359;
+    float r = 6.28318530718 / float(n);
+    float d = cos(floor(0.5 + a / r) * r - a) * length(p);
+    return d - 0.5;
+}
+
+float sdStar(float2 p, int n, float m)
+{
+    float an = 3.14159265359 / float(n);
+    float en = 3.14159265359 / m;
+    float2 acs = float2(cos(an), sin(an));
+    float2 ecs = float2(cos(en), sin(en));
+
+    float bn = fmod(atan2(p.x, p.y), 2.0 * an) - an;
+    float2 pp = length(p) * float2(cos(bn), abs(sin(bn)));
+
+    pp -= 0.5 * acs;
+    pp += ecs * clamp(-dot(pp, ecs), 0.0, 0.5 * acs.y / ecs.y);
+    return length(pp) * sign(pp.x);
+}
+
+float shapeSDF(float2 p, int type)
+{
+    if (type == 0) {
+        return length(p) - 0.5;
+    } else if (type == 1) {
+        return abs(length(p) - 0.35) - 0.12;
+    } else if (type == 2) {
+        float2 d = abs(p) - float2(0.5, 0.5);
+        return max(d.x, d.y);
+    } else if (type == 3) {
+        return abs(p.x) + abs(p.y) - 0.6;
+    } else if (type == 4) {
+        float2 d1 = abs(p) - float2(0.5, 0.15);
+        float2 d2 = abs(p) - float2(0.15, 0.5);
+        return min(max(d1.x, d1.y), max(d2.x, d2.y));
+    } else if (type == 5) {
+        int n = clamp(shape_sides, 3, 12);
+        return sdPolygon(p, n);
+    } else if (type == 6) {
+        int n = clamp(shape_sides, 3, 12);
+        float m = clamp(star_sharpness, 2.0, float(n));
+        return sdStar(p, n, m);
+    }
+    return length(p) - 0.5;
+}
+
+float3 hueShift(float3 col, float shift)
+{
+    float3 k = float3(0.57735, 0.57735, 0.57735);
+    float cosA = cos(shift * 6.2831853);
+    float sinA = sin(shift * 6.2831853);
+    return col * cosA + cross(k, col) * sinA + k * dot(k, col) * (1.0 - cosA);
+}
+
+// ============================================================
+// Grid helpers
+// ============================================================
+
+struct GridResult {
+    float2 cell_id;
+    float2 local;
+};
+
+GridResult squareGrid(float2 uv, float cell_count)
+{
+    float2 grid_uv = uv * cell_count;
+    GridResult r;
+    r.cell_id = floor(grid_uv);
+    r.local = frac(grid_uv) - 0.5;
+    return r;
+}
+
+GridResult brickGrid(float2 uv, float cell_count)
+{
+    float2 grid_uv = uv * cell_count;
+    float row = floor(grid_uv.y);
+    float offset = fmod(row, 2.0) * 0.5;
+    grid_uv.x += offset;
+    GridResult r;
+    r.cell_id = floor(grid_uv);
+    r.local = frac(grid_uv) - 0.5;
+    return r;
+}
+
+GridResult hexGrid(float2 uv, float cell_count)
+{
+    float2 hex_uv = uv * cell_count;
+    float2 r_vec = float2(1.0, 1.73205080757);
+    float2 h = r_vec * 0.5;
+    float2 a = fmod(hex_uv, r_vec) - h;
+    float2 b = fmod(hex_uv - h, r_vec) - h;
+
+    bool useA = dot(a, a) < dot(b, b);
+    float2 cell = useA ? (hex_uv - a) : (hex_uv - b);
+    float2 local = useA ? a : b;
+
+    // Escalar para que el hexagono inscrito toque los bordes de la celda
+    local *= 2.0 / 1.73205080757;
+
+    GridResult r;
+    r.cell_id = floor(cell + 0.5);
+    r.local = local;
+    return r;
+}
+
+// ============================================================
+// Image / source sampling
+// ============================================================
+
+float2 fitUV(float2 p, float texAspect)
+{
+    float2 scale;
+    if (texAspect >= 1.0) {
+        scale = float2(1.0, 1.0 / texAspect);
+    } else {
+        scale = float2(texAspect, 1.0);
+    }
+    return p * scale + 0.5;
+}
+
+float4 sampleImage(float2 p)
+{
+    float aspect = (image_aspect_override > 0.0) ? image_aspect_override : (uv_size.x / uv_size.y);
+    float2 img_uv = fitUV(p, aspect);
+
+    if (img_uv.x < -0.05 || img_uv.x > 1.05 || img_uv.y < -0.05 || img_uv.y > 1.05) {
+        return float4(0.0, 0.0, 0.0, 0.0);
+    }
+
+    float4 col;
+    if (use_source_instead_of_image != 0) {
+        col = source_tex.Sample(imageSampler, img_uv);
+    } else {
+        col = image_tex.Sample(imageSampler, img_uv);
+    }
+
+    // Suavizado en los bordes
+    float2 fadeXY = saturate(img_uv * 20.0) * saturate((1.0 - img_uv) * 20.0);
+    col.a *= fadeXY.x * fadeXY.y;
+
+    return col;
+}
+
+// ============================================================
+// Font atlas sampling
+// ============================================================
+
+float4 sampleFontAtlas(float2 p)
+{
+    int cols = max(font_cols, 1);
+    int rows = max(font_rows, 1);
+    int total = cols * rows;
+    int idx = clamp(font_index, 0, total - 1);
+
+    int col = idx % cols;
+    int row = idx / cols;
+
+    float2 cellSize = float2(1.0 / float(cols), 1.0 / float(rows));
+    float2 cellUV = p + 0.5; // [-0.5,0.5] -> [0,1]
+
+    float2 atlasUV = float2(float(col), float(row)) * cellSize + cellUV * cellSize;
+
+    return font_atlas.Sample(imageSampler, atlasUV);
+}
+
+float2 fitFontUV(float2 p)
+{
+    float atlasAspect = float(font_cols) / float(font_rows);
+    float charAspect = (font_aspect_override > 0.0) ? font_aspect_override : atlasAspect;
+    float2 scale;
+    if (charAspect >= 1.0) {
+        scale = float2(1.0, 1.0 / charAspect);
+    } else {
+        scale = float2(charAspect, 1.0);
+    }
+    return p * scale;
+}
+
+// ============================================================
+// Color blending
+// ============================================================
+
+float3 applySecondaryColor(float3 col, float2 local, float2 cell_id, int active_shape)
+{
+    if (color_mix <= 0.0) return col;
+
+    float t = 0.0;
+    if (color_mode == 0) {
+        t = 1.0;
+    } else if (color_mode == 1) {
+        float dist = length(local) * 1.5;
+        t = saturate(dist);
+    } else if (color_mode == 2) {
+        t = hash1(cell_id) > 0.5 ? 1.0 : 0.0;
+    } else if (color_mode == 3) {
+        t = (active_shape == shape_type_b) ? 1.0 : 0.0;
+    }
+
+    return lerp(col, secondary_color.rgb, color_mix * secondary_color.a * t);
+}
+
+// ============================================================
+// Pixel shader principal
+// ============================================================
+
+float4 mainImage(VertData v_in) : TARGET
+{
+    float aspect = uv_size.x / uv_size.y;
+    float2 uv = v_in.uv;
+
+    if (square_cells == 0) {
+        uv.x *= aspect;
+    }
+
+    // Scroll + offset: desplaza todo el grid
+    uv += scroll_offset + scroll_speed * elapsed_time;
+
+    // Coordenadas de grid segun patron
+    float cell_count = max(density, 1.0);
+    GridResult grid;
+    if (grid_pattern == 0) {
+        grid = squareGrid(uv, cell_count);
+    } else if (grid_pattern == 1) {
+        grid = brickGrid(uv, cell_count);
+    } else {
+        grid = hexGrid(uv, cell_count);
+    }
+
+    float2 cell_id = grid.cell_id;
+    float2 cell_local = grid.local;
+
+    // Random por celda (estable, no cambia frame a frame salvo por time)
+    float2 rnd = hash2(cell_id);
+    float rnd_visible   = rnd.x;
+    float rnd_size      = hash1(cell_id + 17.0);
+    float rnd_rotation  = hash1(cell_id + 31.0);
+    float rnd_hue       = hash1(cell_id + 53.0);
+    float rnd_phase     = hash1(cell_id + 71.0) * 6.2831853;
+    float rnd_shape_mix = hash1(cell_id + 97.0);
+
+    // Visibility (chance binaria por celda)
+    if (rnd_visible > visibility_chance) {
+        return float4(0.0, 0.0, 0.0, 0.0);
+    }
+
+    // Twinkle: fade in/out con fase propia por celda
+    float twinkle = 1.0;
+    if (twinkle_amount > 0.0) {
+        float t = sin(elapsed_time * twinkle_speed + rnd_phase) * 0.5 + 0.5;
+        twinkle = lerp(1.0, t, twinkle_amount);
+    }
+
+    // Drift: la celda se mueve alrededor de su centro
+    float2 local = cell_local;
+    if (drift_amount > 0.0) {
+        float2 drift_offset = float2(
+            sin(elapsed_time * drift_speed + rnd_phase),
+            cos(elapsed_time * drift_speed * 1.3 + rnd_phase)
+        ) * 0.15 * drift_amount;
+        local -= drift_offset;
+    }
+
+    // Aplicar gap: reduce el area util dentro de cada celda
+    float effective_size = max(shape_size * (1.0 - gap), 0.001);
+
+    // Tamano final: base +/- variacion + pulse
+    float size_mult = 1.0 + (rnd_size - 0.5) * 2.0 * size_variation;
+    if (pulse_amount > 0.0) {
+        float p = sin(elapsed_time * pulse_speed + rnd_phase) * 0.5 + 0.5;
+        size_mult *= lerp(1.0, 0.5 + p, pulse_amount);
+    }
+    float final_size = max(effective_size * size_mult, 0.001);
+
+    // Rotacion final: base + auto-rotate + variacion aleatoria por celda
+    float rot_deg = rotation_deg + auto_rotate_speed * elapsed_time;
+    rot_deg += (rnd_rotation - 0.5) * 2.0 * rotation_variation;
+    float rot_rad = radians(rot_deg);
+
+    float2 p = rotate2D(local, -rot_rad) / final_size;
+
+    // Shape Mix: esta celda usa Shape B en vez de Shape A segun la chance
+    int active_shape = shape_type;
+    if (shape_mix_chance > 0.0 && rnd_shape_mix < shape_mix_chance) {
+        active_shape = shape_type_b;
+    }
+
+    // Image / OBS Source: muestreo directo de textura con correccion de aspecto
+    if (active_shape == 7) {
+        float4 img_col = sampleImage(p);
+        float alpha = img_col.a * twinkle * base_color.a;
+        float3 col = img_col.rgb;
+        if (hue_variation > 0.0) {
+            col = hueShift(col, (rnd_hue - 0.5) * hue_variation);
+        }
+        col = applySecondaryColor(col, local, cell_id, active_shape);
+        return float4(col * alpha, alpha);
+    }
+
+    // Character atlas: cualquier caracter desde una textura de cuadricula
+    if (active_shape == 8) {
+        float2 fp = fitFontUV(p);
+        float2 img_uv = fp + 0.5;
+        if (img_uv.x < 0.0 || img_uv.x > 1.0 || img_uv.y < 0.0 || img_uv.y > 1.0) {
+            return float4(0.0, 0.0, 0.0, 0.0);
+        }
+        float4 char_col = sampleFontAtlas(fp);
+        float alpha = char_col.a * twinkle * base_color.a;
+        float3 col = char_col.rgb;
+        if (hue_variation > 0.0) {
+            col = hueShift(col, (rnd_hue - 0.5) * hue_variation);
+        }
+        col = applySecondaryColor(col, local, cell_id, active_shape);
+        return float4(col * alpha, alpha);
+    }
+
+    // SDF shape
+    float d = shapeSDF(p, active_shape);
+
+    // Softness: transicion suave en vez de corte duro
+    float aa = max(edge_softness, 0.001) / max(final_size, 0.001);
+    float mask = 1.0 - smoothstep(0.0, aa, d);
+
+    float alpha = mask * twinkle * base_color.a;
+
+    float3 col = base_color.rgb;
+    if (hue_variation > 0.0) {
+        col = hueShift(col, (rnd_hue - 0.5) * hue_variation);
+    }
+    col = applySecondaryColor(col, local, cell_id, active_shape);
+
+    return float4(col * alpha, alpha);
+}
+
+technique Draw
+{
+    pass
+    {
+        vertex_shader = VSDefault(v_in);
+        pixel_shader  = mainImage(v_in);
+    }
+}

@@ -1,0 +1,515 @@
+// ============================================================
+// Pattern Tiler (clon base) - v0.2
+// Para usar con el plugin "obs-shaderfilter" de Exeldro
+// https://github.com/exeldro/obs-shaderfilter
+//
+// Instalación: Añadir como Effect Filter sobre un Colour Source,
+// activar "Load shader text from file" o pegar este texto,
+// y pulsar "Reload effect" tras cada cambio.
+//
+// v0.2: Labels en español.
+//
+// FASE 0-2: motor de grid + 7 formas (incluye Polygon y
+// Star con SDF paramétrico) + Shape Mix + variación por celda + movimiento
+// + Image / OBS Source como forma (usa el picker nativo de source/escena
+// que trae obs-shaderfilter para parámetros texture2d).
+// ============================================================
+
+uniform float4x4 ViewProj;
+uniform texture2d image;
+
+uniform float elapsed_time;
+uniform float2 uv_size;
+
+sampler_state textureSampler {
+    Filter    = Linear;
+    AddressU  = Clamp;
+    AddressV  = Clamp;
+};
+
+// Texturas para la forma "Image / OBS Source". Se separaron en dos
+// campos independientes con widget_type explícito para que cada uno
+// tenga su propio nombre en el panel de OBS:
+//   - "Fuente OBS / Escena": dropdown para elegir cualquier Source o
+//     Escena en vivo — se renderiza en tiempo real dentro de cada celda.
+//   - "Imagen / Textura": selector de archivo (png/jpg/gif/etc) para
+//     una imagen estática.
+// Si seleccionas un source, tiene prioridad sobre el archivo. Se
+// recomienda un PNG con canal alpha (o un source con transparencia) para
+// que el recorte dentro de cada celda se vea limpio.
+uniform texture2d source_tex
+<
+    string label = "Fuente OBS / Escena";
+    string widget_type = "source";
+>;
+
+uniform texture2d image_tex
+<
+    string label = "Imagen / Textura";
+    string widget_type = "file";
+>;
+
+sampler_state imageSampler {
+    Filter    = Linear;
+    AddressU  = Clamp;
+    AddressV  = Clamp;
+};
+
+struct VertData {
+    float4 pos : POSITION;
+    float2 uv  : TEXCOORD0;
+};
+
+VertData VSDefault(VertData v_in)
+{
+    VertData vert_out;
+    vert_out.pos = mul(float4(v_in.pos.xyz, 1.0), ViewProj);
+    vert_out.uv  = v_in.uv;
+    return vert_out;
+}
+
+// ------------------------------------------------------------
+// Parámetros expuestos en el panel de propiedades de OBS
+// ------------------------------------------------------------
+
+uniform int shape_type
+<
+    string label = "Forma";
+    string widget_type = "select";
+    int option_0_value = 0;
+    string option_0_label = "Dot";
+    int option_1_value = 1;
+    string option_1_label = "Ring";
+    int option_2_value = 2;
+    string option_2_label = "Square";
+    int option_3_value = 3;
+    string option_3_label = "Diamond";
+    int option_4_value = 4;
+    string option_4_label = "Plus";
+    int option_5_value = 5;
+    string option_5_label = "Polygon";
+    int option_6_value = 6;
+    string option_6_label = "Star";
+    int option_7_value = 7;
+    string option_7_label = "Image / OBS Source";
+> = 0;
+
+uniform int shape_sides
+<
+    string label = "Lados del Poligono / Estrella (3-12)";
+    string widget_type = "slider";
+    int minimum = 3;
+    int maximum = 12;
+    int step = 1;
+> = 5;
+
+uniform float star_sharpness
+<
+    string label = "Nitidez de Estrella (2=fino, N=grueso)";
+    string widget_type = "slider";
+    float minimum = 2.0;
+    float maximum = 12.0;
+    float step = 0.1;
+> = 3.0;
+
+// -- Shape Mix: segunda forma que reemplaza a la principal en un % de celdas --
+
+uniform int shape_type_b
+<
+    string label = "Forma B (mezcla)";
+    string widget_type = "select";
+    int option_0_value = 0;
+    string option_0_label = "Dot";
+    int option_1_value = 1;
+    string option_1_label = "Ring";
+    int option_2_value = 2;
+    string option_2_label = "Square";
+    int option_3_value = 3;
+    string option_3_label = "Diamond";
+    int option_4_value = 4;
+    string option_4_label = "Plus";
+    int option_5_value = 5;
+    string option_5_label = "Polygon";
+    int option_6_value = 6;
+    string option_6_label = "Star";
+    int option_7_value = 7;
+    string option_7_label = "Image / OBS Source";
+> = 6;
+
+uniform float shape_mix_chance
+<
+    string label = "Probabilidad de Mezcla (0-1)";
+    string widget_type = "slider";
+    float minimum = 0.0;
+    float maximum = 1.0;
+    float step = 0.01;
+> = 0.0;
+
+uniform float density
+<
+    string label = "Densidad (celdas a lo ancho)";
+    string widget_type = "slider";
+    float minimum = 5.0;
+    float maximum = 200.0;
+    float step = 1.0;
+> = 20.0;
+
+uniform float shape_size
+<
+    string label = "Tamano (0-1, % de la celda)";
+    string widget_type = "slider";
+    float minimum = 0.0;
+    float maximum = 1.0;
+    float step = 0.01;
+> = 0.5;
+
+uniform float edge_softness
+<
+    string label = "Suavizado de Borde";
+    string widget_type = "slider";
+    float minimum = 0.0;
+    float maximum = 0.2;
+    float step = 0.001;
+> = 0.02;
+
+uniform float rotation_deg
+<
+    string label = "Rotacion (grados)";
+    string widget_type = "slider";
+    float minimum = -180.0;
+    float maximum = 180.0;
+    float step = 1.0;
+> = 0.0;
+
+uniform float auto_rotate_speed
+<
+    string label = "Velocidad de Auto-Rotacion";
+    string widget_type = "slider";
+    float minimum = -180.0;
+    float maximum = 180.0;
+    float step = 1.0;
+> = 0.0;
+
+// -- variación por celda --
+
+uniform float visibility_chance
+<
+    string label = "Probabilidad de Visibilidad (0-1)";
+    string widget_type = "slider";
+    float minimum = 0.0;
+    float maximum = 1.0;
+    float step = 0.01;
+> = 1.0;
+
+uniform float twinkle_amount
+<
+    string label = "Intensidad de Parpadeo (0-1)";
+    string widget_type = "slider";
+    float minimum = 0.0;
+    float maximum = 1.0;
+    float step = 0.01;
+> = 0.0;
+
+uniform float twinkle_speed
+<
+    string label = "Velocidad de Parpadeo";
+    string widget_type = "slider";
+    float minimum = 0.0;
+    float maximum = 10.0;
+    float step = 0.1;
+> = 1.0;
+
+uniform float size_variation
+<
+    string label = "Variacion de Tamano (0-1)";
+    string widget_type = "slider";
+    float minimum = 0.0;
+    float maximum = 1.0;
+    float step = 0.01;
+> = 0.0;
+
+uniform float rotation_variation
+<
+    string label = "Variacion de Rotacion (grados)";
+    string widget_type = "slider";
+    float minimum = 0.0;
+    float maximum = 180.0;
+    float step = 1.0;
+> = 0.0;
+
+uniform float hue_variation
+<
+    string label = "Variacion de Tono (0-1)";
+    string widget_type = "slider";
+    float minimum = 0.0;
+    float maximum = 1.0;
+    float step = 0.01;
+> = 0.0;
+
+// -- color base --
+
+uniform float4 base_color
+<
+    string label = "Color Base";
+    string widget_type = "color";
+> = {1.0, 1.0, 1.0, 1.0};
+
+// -- movimiento --
+
+uniform float2 scroll_speed
+<
+    string label = "Velocidad de Desplazamiento (x,y)";
+> = {0.0, 0.0};
+
+uniform float drift_amount
+<
+    string label = "Cantidad de Deriva (0-1)";
+    string widget_type = "slider";
+    float minimum = 0.0;
+    float maximum = 1.0;
+    float step = 0.01;
+> = 0.0;
+
+uniform float drift_speed
+<
+    string label = "Velocidad de Deriva";
+    string widget_type = "slider";
+    float minimum = 0.0;
+    float maximum = 10.0;
+    float step = 0.1;
+> = 1.0;
+
+uniform float pulse_amount
+<
+    string label = "Intensidad de Pulso (0-1)";
+    string widget_type = "slider";
+    float minimum = 0.0;
+    float maximum = 1.0;
+    float step = 0.01;
+> = 0.0;
+
+uniform float pulse_speed
+<
+    string label = "Velocidad de Pulso";
+    string widget_type = "slider";
+    float minimum = 0.0;
+    float maximum = 10.0;
+    float step = 0.1;
+> = 1.0;
+
+// ------------------------------------------------------------
+// Utilidades
+// ------------------------------------------------------------
+
+// Hash determinístico por celda -> pseudoaleatorio estable
+float2 hash2(float2 p)
+{
+    p = float2(dot(p, float2(127.1, 311.7)), dot(p, float2(269.5, 183.3)));
+    return frac(sin(p) * 43758.5453123);
+}
+
+float hash1(float2 p)
+{
+    return hash2(p).x;
+}
+
+float2 rotate2D(float2 p, float angle_rad)
+{
+    float s = sin(angle_rad);
+    float c = cos(angle_rad);
+    return float2(p.x * c - p.y * s, p.x * s + p.y * c);
+}
+
+// Polygon regular de N lados. Es una aproximación angular (no es una SDF
+// euclidiana exacta) pero visualmente da un polígono limpio y con buen
+// antialiasing al pasarla por smoothstep, igual que las demás formas.
+float sdPolygon(float2 p, int n)
+{
+    float a = atan2(p.x, p.y) + 3.14159265359;
+    float r = 6.28318530718 / float(n);
+    float d = cos(floor(0.5 + a / r) * r - a) * length(p);
+    return d - 0.5;
+}
+
+// Estrella de N puntas, SDF exacta (adaptación de la función sdStar de
+// Inigo Quilez). "m" controla qué tan afiladas son las puntas: cerca de 2
+// = puntas muy finas, cerca de n = casi un polígono.
+float sdStar(float2 p, int n, float m)
+{
+    float an = 3.14159265359 / float(n);
+    float en = 3.14159265359 / m;
+    float2 acs = float2(cos(an), sin(an));
+    float2 ecs = float2(cos(en), sin(en));
+
+    float bn = fmod(atan2(p.x, p.y), 2.0 * an) - an;
+    float2 pp = length(p) * float2(cos(bn), abs(sin(bn)));
+
+    pp -= 0.5 * acs;
+    pp += ecs * clamp(-dot(pp, ecs), 0.0, 0.5 * acs.y / ecs.y);
+    return length(pp) * sign(pp.x);
+}
+
+// SDF (0 = borde, negativo = dentro, positivo = fuera) por forma
+float shapeSDF(float2 p, int type)
+{
+    if (type == 0) {
+        // Dot
+        return length(p) - 0.5;
+    } else if (type == 1) {
+        // Ring
+        float d = abs(length(p) - 0.35) - 0.12;
+        return d;
+    } else if (type == 2) {
+        // Square
+        float2 d = abs(p) - float2(0.5, 0.5);
+        return max(d.x, d.y);
+    } else if (type == 3) {
+        // Diamond
+        return abs(p.x) + abs(p.y) - 0.6;
+    } else if (type == 4) {
+        // Plus
+        float2 d1 = abs(p) - float2(0.5, 0.15);
+        float2 d2 = abs(p) - float2(0.15, 0.5);
+        return min(max(d1.x, d1.y), max(d2.x, d2.y));
+    } else if (type == 5) {
+        // Polygon (N lados)
+        int n = clamp(shape_sides, 3, 12);
+        return sdPolygon(p, n);
+    } else if (type == 6) {
+        // Star (N puntas)
+        int n = clamp(shape_sides, 3, 12);
+        float m = clamp(star_sharpness, 2.0, float(n));
+        return sdStar(p, n, m);
+    }
+    return length(p) - 0.5;
+}
+
+float3 hueShift(float3 col, float shift)
+{
+    float3 k = float3(0.57735, 0.57735, 0.57735);
+    float cosA = cos(shift * 6.2831853);
+    float sinA = sin(shift * 6.2831853);
+    return col * cosA + cross(k, col) * sinA + k * dot(k, col) * (1.0 - cosA);
+}
+
+// ------------------------------------------------------------
+// Pixel shader principal
+// ------------------------------------------------------------
+
+float4 mainImage(VertData v_in) : TARGET
+{
+    float aspect = uv_size.x / uv_size.y;
+    float2 uv = v_in.uv;
+    uv.x *= aspect;
+
+    // Scroll: desplaza todo el grid en el tiempo
+    uv += scroll_speed * elapsed_time;
+
+    // Coordenadas de grid
+    float cell_count = max(density, 1.0);
+    float2 grid_uv = uv * cell_count;
+    float2 cell_id = floor(grid_uv);
+    float2 cell_local = frac(grid_uv) - 0.5; // centro de celda en [-0.5, 0.5]
+
+    // Random por celda (estable, no cambia frame a frame salvo por time)
+    float2 rnd = hash2(cell_id);
+    float rnd_visible   = rnd.x;
+    float rnd_size      = hash1(cell_id + 17.0);
+    float rnd_rotation  = hash1(cell_id + 31.0);
+    float rnd_hue       = hash1(cell_id + 53.0);
+    float rnd_phase     = hash1(cell_id + 71.0) * 6.2831853;
+    float rnd_shape_mix = hash1(cell_id + 97.0);
+
+    // Visibility (chance binaria por celda)
+    if (rnd_visible > visibility_chance) {
+        return float4(0.0, 0.0, 0.0, 0.0);
+    }
+
+    // Twinkle: fade in/out con fase propia por celda
+    float twinkle = 1.0;
+    if (twinkle_amount > 0.0) {
+        float t = sin(elapsed_time * twinkle_speed + rnd_phase) * 0.5 + 0.5;
+        twinkle = lerp(1.0, t, twinkle_amount);
+    }
+
+    // Drift: la celda se mueve alrededor de su centro
+    float2 local = cell_local;
+    if (drift_amount > 0.0) {
+        float2 drift_offset = float2(
+            sin(elapsed_time * drift_speed + rnd_phase),
+            cos(elapsed_time * drift_speed * 1.3 + rnd_phase)
+        ) * 0.15 * drift_amount;
+        local -= drift_offset;
+    }
+
+    // Tamaño final: base +/- variación + pulse
+    float size_mult = 1.0 + (rnd_size - 0.5) * 2.0 * size_variation;
+    if (pulse_amount > 0.0) {
+        float p = sin(elapsed_time * pulse_speed + rnd_phase) * 0.5 + 0.5;
+        size_mult *= lerp(1.0, 0.5 + p, pulse_amount);
+    }
+    float final_size = max(shape_size * size_mult, 0.001);
+
+    // Rotación final: base + auto-rotate + variación aleatoria por celda
+    float rot_deg = rotation_deg + auto_rotate_speed * elapsed_time;
+    rot_deg += (rnd_rotation - 0.5) * 2.0 * rotation_variation;
+    float rot_rad = radians(rot_deg);
+
+    float2 p = rotate2D(local, -rot_rad) / final_size;
+
+    // Shape Mix: esta celda usa Shape B en vez de Shape A según la chance
+    int active_shape = shape_type;
+    if (shape_mix_chance > 0.0 && rnd_shape_mix < shape_mix_chance) {
+        active_shape = shape_type_b;
+    }
+
+    // Image / OBS Source: no es una SDF, es un muestreo directo de textura
+    // (ya sea la imagen estática o el source/escena en vivo que se haya
+    // elegido en el panel — obs-shaderfilter resuelve eso automáticamente).
+    // p está en el espacio [-0.5, 0.5] cuando el tamaño de la celda es 1,
+    // así que sumamos 0.5 para convertirlo en UV [0, 1] de la imagen.
+    if (active_shape == 7) {
+        float2 img_uv = p + 0.5;
+        if (img_uv.x < 0.0 || img_uv.x > 1.0 || img_uv.y < 0.0 || img_uv.y > 1.0) {
+            return float4(0.0, 0.0, 0.0, 0.0);
+        }
+        // Prioridad: source_tex > image_tex
+        float4 src = source_tex.Sample(imageSampler, float2(0.5, 0.5));
+        float4 img_col;
+        if (src.a > 0.0) {
+            img_col = source_tex.Sample(imageSampler, img_uv);
+        } else {
+            img_col = image_tex.Sample(imageSampler, img_uv);
+        }
+        float alpha = img_col.a * twinkle * base_color.a;
+        float3 col = img_col.rgb;
+        if (hue_variation > 0.0) {
+            col = hueShift(col, (rnd_hue - 0.5) * hue_variation);
+        }
+        return float4(col * alpha, alpha);
+    }
+
+    float d = shapeSDF(p, active_shape);
+
+    // Softness: transición suave en vez de corte duro
+    float aa = max(edge_softness, 0.001) / max(final_size, 0.001);
+    float mask = 1.0 - smoothstep(0.0, aa, d);
+
+    float alpha = mask * twinkle * base_color.a;
+
+    float3 col = base_color.rgb;
+    if (hue_variation > 0.0) {
+        col = hueShift(col, (rnd_hue - 0.5) * hue_variation);
+    }
+
+    return float4(col * alpha, alpha);
+}
+
+technique Draw
+{
+    pass
+    {
+        vertex_shader = VSDefault(v_in);
+        pixel_shader  = mainImage(v_in);
+    }
+}
