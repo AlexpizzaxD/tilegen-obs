@@ -55,6 +55,10 @@ uniform bool square_cells;
 
 uniform float gap;
 
+uniform float seed;
+
+uniform float pattern_scale;
+
 // ============================================================
 // 2. FORMA PRINCIPAL
 // ============================================================
@@ -82,30 +86,21 @@ uniform int shape_type_b;
 uniform float shape_mix_chance;
 
 // ============================================================
-// 4. IMAGEN / FUENTE OBS
+// 4. IMAGEN / FUENTE OBS (no implementado)
 // ============================================================
-
-uniform int use_source_instead_of_image;
-
-uniform texture2d source_tex;
-
-uniform texture2d image_tex;
-
-uniform float image_aspect_override;
+// uniform int use_source_instead_of_image;
+// uniform texture2d source_tex;
+// uniform texture2d image_tex;
+// uniform float image_aspect_override;
 
 // ============================================================
-// 5. ATLAS DE CARACTERES
+// 5. ATLAS DE CARACTERES (no implementado)
 // ============================================================
-
-uniform texture2d font_atlas;
-
-uniform int font_cols;
-
-uniform int font_rows;
-
-uniform int font_index;
-
-uniform float font_aspect_override;
+// uniform texture2d font_atlas;
+// uniform int font_cols;
+// uniform int font_rows;
+// uniform int font_index;
+// uniform float font_aspect_override;
 
 // ============================================================
 // 6. COLOR
@@ -113,11 +108,9 @@ uniform float font_aspect_override;
 
 uniform float4 base_color;
 
-uniform float4 secondary_color;
-
-uniform int color_mode;
-
-uniform float color_mix;
+// uniform float4 secondary_color;
+// uniform int color_mode;
+// uniform float color_mix;
 
 // ============================================================
 // 7. VARIACION POR CELDA
@@ -130,6 +123,8 @@ uniform float size_variation;
 uniform float rotation_variation;
 
 uniform float hue_variation;
+
+uniform float color_jitter;
 
 uniform float twinkle_amount;
 
@@ -150,6 +145,22 @@ uniform float drift_speed;
 uniform float pulse_amount;
 
 uniform float pulse_speed;
+
+// ============================================================
+// 9. BLEND MODE
+// ============================================================
+
+uniform int blend_mode;
+
+// ============================================================
+// 10. BACKGROUND OVERRIDE
+// ============================================================
+
+uniform int use_internal_background;
+
+uniform float4 background_color;
+
+uniform float background_alpha;
 
 // ============================================================
 // Utilidades
@@ -188,7 +199,10 @@ float sdStar(float2 p, int n, float m)
     float2 acs = float2(cos(an), sin(an));
     float2 ecs = float2(cos(en), sin(en));
 
-    float bn = fmod(atan2(p.x, p.y), 2.0 * an) - an;
+    // HLSL no tiene mod, usamos frac para evitar el bug de fmod con negativos
+    // atan2 devuelve [-pi, pi]; sumamos pi y normalizamos con frac para obtener
+    // un angulo positivo en [0, 2*an] y luego lo centramos en [-an, an]
+    float bn = frac((atan2(p.x, p.y) + 3.14159265359) / (2.0 * an)) * 2.0 * an - an;
     float2 pp = length(p) * float2(cos(bn), abs(sin(bn)));
 
     pp -= 0.5 * acs;
@@ -296,85 +310,29 @@ float2 fitUV(float2 p, float texAspect)
     return p * scale + 0.5;
 }
 
-float4 sampleImage(float2 p)
-{
-    float aspect = (image_aspect_override > 0.0) ? image_aspect_override : (uv_size.x / uv_size.y);
-    float2 img_uv = fitUV(p, aspect);
-
-    if (img_uv.x < -0.05 || img_uv.x > 1.05 || img_uv.y < -0.05 || img_uv.y > 1.05) {
-        return float4(0.0, 0.0, 0.0, 0.0);
-    }
-
-    float4 col;
-    if (use_source_instead_of_image != 0) {
-        col = source_tex.Sample(imageSampler, img_uv);
-    } else {
-        col = image_tex.Sample(imageSampler, img_uv);
-    }
-
-    // Suavizado en los bordes
-    float2 fadeXY = saturate(img_uv * 20.0) * saturate((1.0 - img_uv) * 20.0);
-    col.a *= fadeXY.x * fadeXY.y;
-
-    return col;
-}
+// ============================================================
+// Image / source sampling (no implementado - texturas comentadas)
+// ============================================================
+// float4 sampleImage(float2 p)
+// {
+//     float aspect = (image_aspect_override > 0.0) ? image_aspect_override : (uv_size.x / uv_size.y);
+//     float2 img_uv = fitUV(p, aspect);
+//     ...
+// }
 
 // ============================================================
-// Font atlas sampling
+// Font atlas sampling (no implementado)
 // ============================================================
-
-float4 sampleFontAtlas(float2 p)
-{
-    int cols = max(font_cols, 1);
-    int rows = max(font_rows, 1);
-    int total = cols * rows;
-    int idx = clamp(font_index, 0, total - 1);
-
-    int col = idx % cols;
-    int row = idx / cols;
-
-    float2 cellSize = float2(1.0 / float(cols), 1.0 / float(rows));
-    float2 cellUV = p + 0.5; // [-0.5,0.5] -> [0,1]
-
-    float2 atlasUV = float2(float(col), float(row)) * cellSize + cellUV * cellSize;
-
-    return font_atlas.Sample(imageSampler, atlasUV);
-}
-
-float2 fitFontUV(float2 p)
-{
-    float atlasAspect = float(font_cols) / float(font_rows);
-    float charAspect = (font_aspect_override > 0.0) ? font_aspect_override : atlasAspect;
-    float2 scale;
-    if (charAspect >= 1.0) {
-        scale = float2(1.0, 1.0 / charAspect);
-    } else {
-        scale = float2(charAspect, 1.0);
-    }
-    return p * scale;
-}
+// float4 sampleFontAtlas(float2 p) { ... }
+// float2 fitFontUV(float2 p) { ... }
 
 // ============================================================
-// Color blending
+// Color blending (stub: no implementado)
 // ============================================================
 
 float3 applySecondaryColor(float3 col, float2 local, float2 cell_id, int active_shape)
 {
-    if (color_mix <= 0.0) return col;
-
-    float t = 0.0;
-    if (color_mode == 0) {
-        t = 1.0;
-    } else if (color_mode == 1) {
-        float dist = length(local) * 1.5;
-        t = saturate(dist);
-    } else if (color_mode == 2) {
-        t = hash1(cell_id) > 0.5 ? 1.0 : 0.0;
-    } else if (color_mode == 3) {
-        t = (active_shape == shape_type_b) ? 1.0 : 0.0;
-    }
-
-    return lerp(col, secondary_color.rgb, color_mix * secondary_color.a * t);
+    return col;
 }
 
 // ============================================================
@@ -389,6 +347,9 @@ float4 mainImage(VertData v_in) : TARGET
     if (square_cells == 0) {
         uv.x *= aspect;
     }
+
+    // Pattern scale: zoom general del patron (1.0 = sin cambio)
+    uv *= pattern_scale;
 
     // Scroll + offset: desplaza todo el grid
     uv += scroll_offset + scroll_speed * elapsed_time;
@@ -407,106 +368,133 @@ float4 mainImage(VertData v_in) : TARGET
     float2 cell_id = grid.cell_id;
     float2 cell_local = grid.local;
 
+    // Seed: desplaza los valores random de cada celda para obtener patrones distintos
+    float2 seed_offset = float2(seed, seed * 1.3);
+
     // Random por celda (estable, no cambia frame a frame salvo por time)
-    float2 rnd = hash2(cell_id);
+    float2 rnd = hash2(cell_id + seed_offset);
     float rnd_visible   = rnd.x;
-    float rnd_size      = hash1(cell_id + 17.0);
-    float rnd_rotation  = hash1(cell_id + 31.0);
-    float rnd_hue       = hash1(cell_id + 53.0);
-    float rnd_phase     = hash1(cell_id + 71.0) * 6.2831853;
-    float rnd_shape_mix = hash1(cell_id + 97.0);
+    float rnd_size      = hash1(cell_id + seed_offset + 17.0);
+    float rnd_rotation  = hash1(cell_id + seed_offset + 31.0);
+    float rnd_hue       = hash1(cell_id + seed_offset + 53.0);
+    float rnd_phase     = hash1(cell_id + seed_offset + 71.0) * 6.2831853;
+    float rnd_shape_mix = hash1(cell_id + seed_offset + 97.0);
+
+    // Muestrear la imagen base una sola vez (sera usada por blend mode)
+    float4 base;
+    if (use_internal_background != 0) {
+        // Fondo interno: aplicar alpha del slider
+        base = float4(background_color.rgb,
+                      background_color.a * background_alpha);
+    } else {
+        // Fondo de la fuente original
+        base = image.Sample(textureSampler, v_in.uv);
+    }
+
+    // Pattern por defecto: transparente
+    float3 pattern_rgb = float3(0.0, 0.0, 0.0);
+    float pattern_a = 0.0;
+    int active_shape = shape_type;
 
     // Visibility (chance binaria por celda)
-    if (rnd_visible > visibility_chance) {
-        return float4(0.0, 0.0, 0.0, 0.0);
-    }
-
-    // Twinkle: fade in/out con fase propia por celda
-    float twinkle = 1.0;
-    if (twinkle_amount > 0.0) {
-        float t = sin(elapsed_time * twinkle_speed + rnd_phase) * 0.5 + 0.5;
-        twinkle = lerp(1.0, t, twinkle_amount);
-    }
-
-    // Drift: la celda se mueve alrededor de su centro
-    float2 local = cell_local;
-    if (drift_amount > 0.0) {
-        float2 drift_offset = float2(
-            sin(elapsed_time * drift_speed + rnd_phase),
-            cos(elapsed_time * drift_speed * 1.3 + rnd_phase)
-        ) * 0.15 * drift_amount;
-        local -= drift_offset;
-    }
-
-    // Aplicar gap: reduce el area util dentro de cada celda
-    float effective_size = max(shape_size * (1.0 - gap), 0.001);
-
-    // Tamano final: base +/- variacion + pulse
-    float size_mult = 1.0 + (rnd_size - 0.5) * 2.0 * size_variation;
-    if (pulse_amount > 0.0) {
-        float p = sin(elapsed_time * pulse_speed + rnd_phase) * 0.5 + 0.5;
-        size_mult *= lerp(1.0, 0.5 + p, pulse_amount);
-    }
-    float final_size = max(effective_size * size_mult, 0.001);
-
-    // Rotacion final: base + auto-rotate + variacion aleatoria por celda
-    float rot_deg = rotation_deg + auto_rotate_speed * elapsed_time;
-    rot_deg += (rnd_rotation - 0.5) * 2.0 * rotation_variation;
-    float rot_rad = radians(rot_deg);
-
-    float2 p = rotate2D(local, -rot_rad) / final_size;
-
-    // Shape Mix: esta celda usa Shape B en vez de Shape A segun la chance
-    int active_shape = shape_type;
-    if (shape_mix_chance > 0.0 && rnd_shape_mix < shape_mix_chance) {
-        active_shape = shape_type_b;
-    }
-
-    // Image / OBS Source: muestreo directo de textura con correccion de aspecto
-    if (active_shape == 7) {
-        float4 img_col = sampleImage(p);
-        float alpha = img_col.a * twinkle * base_color.a;
-        float3 col = img_col.rgb;
-        if (hue_variation > 0.0) {
-            col = hueShift(col, (rnd_hue - 0.5) * hue_variation);
+    if (rnd_visible <= visibility_chance) {
+        // Twinkle: fade in/out con fase propia por celda
+        float twinkle = 1.0;
+        if (twinkle_amount > 0.0) {
+            float t = sin(elapsed_time * twinkle_speed + rnd_phase) * 0.5 + 0.5;
+            twinkle = lerp(1.0, t, twinkle_amount);
         }
-        col = applySecondaryColor(col, local, cell_id, active_shape);
-        return float4(col * alpha, alpha);
-    }
 
-    // Character atlas: cualquier caracter desde una textura de cuadricula
-    if (active_shape == 8) {
-        float2 fp = fitFontUV(p);
-        float2 img_uv = fp + 0.5;
-        if (img_uv.x < 0.0 || img_uv.x > 1.0 || img_uv.y < 0.0 || img_uv.y > 1.0) {
-            return float4(0.0, 0.0, 0.0, 0.0);
+        // Drift: la celda se mueve alrededor de su centro
+        float2 local = cell_local;
+        if (drift_amount > 0.0) {
+            float2 drift_offset = float2(
+                sin(elapsed_time * drift_speed + rnd_phase),
+                cos(elapsed_time * drift_speed * 1.3 + rnd_phase)
+            ) * 0.15 * drift_amount;
+            local -= drift_offset;
         }
-        float4 char_col = sampleFontAtlas(fp);
-        float alpha = char_col.a * twinkle * base_color.a;
-        float3 col = char_col.rgb;
-        if (hue_variation > 0.0) {
-            col = hueShift(col, (rnd_hue - 0.5) * hue_variation);
+
+        // Aplicar gap: reduce el area util dentro de cada celda
+        float effective_size = max(shape_size * (1.0 - gap), 0.001);
+
+        // Tamano final: base +/- variacion + pulse
+        float size_mult = 1.0 + (rnd_size - 0.5) * 2.0 * size_variation;
+        if (pulse_amount > 0.0) {
+            float p = sin(elapsed_time * pulse_speed + rnd_phase) * 0.5 + 0.5;
+            size_mult *= lerp(1.0, 0.5 + p, pulse_amount);
         }
-        col = applySecondaryColor(col, local, cell_id, active_shape);
-        return float4(col * alpha, alpha);
+        float final_size = max(effective_size * size_mult, 0.001);
+
+        // Rotacion final: base + auto-rotate + variacion aleatoria por celda
+        float rot_deg = rotation_deg + auto_rotate_speed * elapsed_time;
+        rot_deg += (rnd_rotation - 0.5) * 2.0 * rotation_variation;
+        float rot_rad = radians(rot_deg);
+
+        float2 p = rotate2D(local, -rot_rad) / final_size;
+
+        // Shape Mix: esta celda usa Shape B en vez de Shape A segun la chance
+        if (shape_mix_chance > 0.0 && rnd_shape_mix < shape_mix_chance) {
+            active_shape = shape_type_b;
+        }
+
+        // Image / OBS Source: no implementado
+        // if (active_shape == 7) { ... }
+        // else if (active_shape == 8) { ... }
+        // SDF shape (tambien cubre shapes 7 y 8 como fallback)
+        {
+            float d = shapeSDF(p, active_shape);
+            float aa = max(edge_softness, 0.001) / max(final_size, 0.001);
+            float mask = 1.0 - smoothstep(0.0, aa, d);
+            pattern_a = mask * twinkle * base_color.a;
+            pattern_rgb = base_color.rgb;
+        }
+
+        // Hue variation y color jitter
+        if (pattern_a > 0.0) {
+            if (hue_variation > 0.0) {
+                pattern_rgb = hueShift(pattern_rgb, (rnd_hue - 0.5) * hue_variation);
+            }
+            if (color_jitter > 0.0) {
+                // Color aleatorio por celda
+                float3 rnd_color = float3(
+                    hash1(cell_id + seed_offset + 79.0),
+                    hash1(cell_id + seed_offset + 113.0),
+                    hash1(cell_id + seed_offset + 151.0)
+                );
+                pattern_rgb = lerp(pattern_rgb, rnd_color, color_jitter);
+            }
+            pattern_rgb = applySecondaryColor(pattern_rgb, cell_local, cell_id, shape_type);
+        }
     }
 
-    // SDF shape
-    float d = shapeSDF(p, active_shape);
-
-    // Softness: transicion suave en vez de corte duro
-    float aa = max(edge_softness, 0.001) / max(final_size, 0.001);
-    float mask = 1.0 - smoothstep(0.0, aa, d);
-
-    float alpha = mask * twinkle * base_color.a;
-
-    float3 col = base_color.rgb;
-    if (hue_variation > 0.0) {
-        col = hueShift(col, (rnd_hue - 0.5) * hue_variation);
+    // Aplicar blend mode sobre la imagen base
+    float4 result;
+    if (blend_mode == 0) {
+        // Normal: standard "over" operator
+        result.rgb = pattern_rgb * pattern_a + base.rgb * (1.0 - pattern_a);
+        result.a = pattern_a + base.a * (1.0 - pattern_a);
+    } else if (blend_mode == 1) {
+        // Add
+        result.rgb = base.rgb + pattern_rgb * pattern_a;
+        result.a = max(base.a, pattern_a);
+    } else if (blend_mode == 2) {
+        // Multiply
+        float3 mult = base.rgb * lerp(float3(1.0, 1.0, 1.0), pattern_rgb, pattern_a);
+        result.rgb = mult;
+        result.a = max(base.a, pattern_a);
+    } else if (blend_mode == 3) {
+        // Screen
+        float3 screened = 1.0 - (1.0 - base.rgb) * (1.0 - pattern_rgb * pattern_a);
+        result.rgb = screened;
+        result.a = max(base.a, pattern_a);
+    } else {
+        // Fallback: normal
+        result.rgb = pattern_rgb * pattern_a + base.rgb * (1.0 - pattern_a);
+        result.a = pattern_a + base.a * (1.0 - pattern_a);
     }
-    col = applySecondaryColor(col, local, cell_id, active_shape);
 
-    return float4(col * alpha, alpha);
+    return result;
 }
 
 technique Draw

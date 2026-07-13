@@ -16,6 +16,8 @@ the Free Software Foundation; either version 2 of the License, or
 #define SETTING_DENSITY "density"
 #define SETTING_SQUARE_CELLS "square_cells"
 #define SETTING_GAP "gap"
+#define SETTING_SEED "seed"
+#define SETTING_PATTERN_SCALE "pattern_scale"
 
 #define SETTING_SHAPE_TYPE "shape_type"
 #define SETTING_SHAPE_SIZE "shape_size"
@@ -48,6 +50,7 @@ the Free Software Foundation; either version 2 of the License, or
 #define SETTING_SIZE_VARIATION "size_variation"
 #define SETTING_ROTATION_VARIATION "rotation_variation"
 #define SETTING_HUE_VARIATION "hue_variation"
+#define SETTING_COLOR_JITTER "color_jitter"
 #define SETTING_TWINKLE_AMOUNT "twinkle_amount"
 #define SETTING_TWINKLE_SPEED "twinkle_speed"
 
@@ -57,6 +60,11 @@ the Free Software Foundation; either version 2 of the License, or
 #define SETTING_DRIFT_SPEED "drift_speed"
 #define SETTING_PULSE_AMOUNT "pulse_amount"
 #define SETTING_PULSE_SPEED "pulse_speed"
+
+#define SETTING_BLEND_MODE "blend_mode"
+#define SETTING_USE_INTERNAL_BG "use_internal_background"
+#define SETTING_BACKGROUND_COLOR "background_color"
+#define SETTING_BACKGROUND_ALPHA "background_alpha"
 
 struct tilegen_filter {
 	obs_source_t *source;
@@ -82,6 +90,9 @@ static void tilegen_update(void *data, obs_data_t *settings)
 	tf->settings.square_cells =
 		obs_data_get_bool(settings, SETTING_SQUARE_CELLS);
 	tf->settings.gap = (float)obs_data_get_double(settings, SETTING_GAP);
+	tf->settings.seed = (float)obs_data_get_double(settings, SETTING_SEED);
+	tf->settings.pattern_scale =
+		(float)obs_data_get_double(settings, SETTING_PATTERN_SCALE);
 
 	tf->settings.shape_type =
 		(int)obs_data_get_int(settings, SETTING_SHAPE_TYPE);
@@ -138,6 +149,8 @@ static void tilegen_update(void *data, obs_data_t *settings)
 		(float)obs_data_get_double(settings, SETTING_ROTATION_VARIATION);
 	tf->settings.hue_variation =
 		(float)obs_data_get_double(settings, SETTING_HUE_VARIATION);
+	tf->settings.color_jitter =
+		(float)obs_data_get_double(settings, SETTING_COLOR_JITTER);
 	tf->settings.twinkle_amount =
 		(float)obs_data_get_double(settings, SETTING_TWINKLE_AMOUNT);
 	tf->settings.twinkle_speed =
@@ -156,6 +169,17 @@ static void tilegen_update(void *data, obs_data_t *settings)
 		(float)obs_data_get_double(settings, SETTING_PULSE_AMOUNT);
 	tf->settings.pulse_speed =
 		(float)obs_data_get_double(settings, SETTING_PULSE_SPEED);
+
+	tf->settings.blend_mode =
+		(int)obs_data_get_int(settings, SETTING_BLEND_MODE);
+
+	tf->settings.use_internal_background =
+		(int)obs_data_get_int(settings, SETTING_USE_INTERNAL_BG);
+	uint32_t bg = (uint32_t)obs_data_get_int(settings,
+						 SETTING_BACKGROUND_COLOR);
+	vec4_from_rgba(&tf->settings.background_color, bg);
+	tf->settings.background_alpha =
+		(float)obs_data_get_double(settings, SETTING_BACKGROUND_ALPHA);
 }
 
 static void *tilegen_create(obs_data_t *settings, obs_source_t *source)
@@ -166,6 +190,8 @@ static void *tilegen_create(obs_data_t *settings, obs_source_t *source)
 
 	char *effect_path = obs_module_file("effects/tilegen.effect");
 	if (effect_path) {
+		obs_enter_graphics();
+
 		char *error = NULL;
 		tf->effect = gs_effect_create_from_file(effect_path, &error);
 		if (!tf->effect && error) {
@@ -176,6 +202,9 @@ static void *tilegen_create(obs_data_t *settings, obs_source_t *source)
 			obs_log(LOG_ERROR,
 				"Failed to load tilegen.effect (unknown error)");
 		}
+
+		obs_leave_graphics();
+
 		bfree(effect_path);
 	}
 
@@ -186,8 +215,11 @@ static void *tilegen_create(obs_data_t *settings, obs_source_t *source)
 static void tilegen_destroy(void *data)
 {
 	struct tilegen_filter *tf = data;
-	if (tf->effect)
+	if (tf->effect) {
+		obs_enter_graphics();
 		gs_effect_destroy(tf->effect);
+		obs_leave_graphics();
+	}
 	bfree(tf);
 }
 
@@ -264,6 +296,9 @@ static void tilegen_video_render(void *data, gs_effect_t *effect)
 		set_uniform_bool(tf->effect, "square_cells",
 				 tf->settings.square_cells);
 		set_uniform_float(tf->effect, "gap", tf->settings.gap);
+		set_uniform_float(tf->effect, "seed", tf->settings.seed);
+		set_uniform_float(tf->effect, "pattern_scale",
+				  tf->settings.pattern_scale);
 
 		set_uniform_int(tf->effect, "shape_type",
 				tf->settings.shape_type);
@@ -316,6 +351,8 @@ static void tilegen_video_render(void *data, gs_effect_t *effect)
 				  tf->settings.rotation_variation);
 		set_uniform_float(tf->effect, "hue_variation",
 				  tf->settings.hue_variation);
+		set_uniform_float(tf->effect, "color_jitter",
+				  tf->settings.color_jitter);
 		set_uniform_float(tf->effect, "twinkle_amount",
 				  tf->settings.twinkle_amount);
 		set_uniform_float(tf->effect, "twinkle_speed",
@@ -333,6 +370,16 @@ static void tilegen_video_render(void *data, gs_effect_t *effect)
 				  tf->settings.pulse_amount);
 		set_uniform_float(tf->effect, "pulse_speed",
 				  tf->settings.pulse_speed);
+
+		set_uniform_int(tf->effect, "blend_mode",
+				tf->settings.blend_mode);
+
+		set_uniform_int(tf->effect, "use_internal_background",
+				tf->settings.use_internal_background);
+		set_uniform_vec4(tf->effect, "background_color",
+				 &tf->settings.background_color);
+		set_uniform_float(tf->effect, "background_alpha",
+				  tf->settings.background_alpha);
 
 		obs_source_process_filter_end(tf->source, tf->effect, 0, 0);
 	} else {
@@ -377,6 +424,12 @@ static obs_properties_t *tilegen_properties(void *data)
 	obs_properties_add_float_slider(props, SETTING_GAP,
 					obs_module_text("Gap"), 0.0,
 					0.95, 0.01);
+	obs_properties_add_float_slider(props, SETTING_SEED,
+					obs_module_text("Seed"), 0.0,
+					100.0, 1.0);
+	obs_properties_add_float_slider(props, SETTING_PATTERN_SCALE,
+					obs_module_text("PatternScale"),
+					0.25, 4.0, 0.05);
 
 	obs_property_t *shape_type = obs_properties_add_list(
 		props, SETTING_SHAPE_TYPE, obs_module_text("ShapeType"),
@@ -405,6 +458,73 @@ static obs_properties_t *tilegen_properties(void *data)
 	obs_properties_add_color_alpha(props, SETTING_BASE_COLOR,
 				       obs_module_text("BaseColor"));
 
+	obs_properties_add_float_slider(props, SETTING_VISIBILITY,
+					obs_module_text("Visibility"),
+					0.0, 1.0, 0.01);
+	obs_properties_add_float_slider(props, SETTING_SIZE_VARIATION,
+					obs_module_text("SizeVariation"),
+					0.0, 1.0, 0.01);
+	obs_properties_add_float_slider(props, SETTING_ROTATION_VARIATION,
+					obs_module_text("RotationVariation"),
+					0.0, 1.0, 0.01);
+	obs_properties_add_float_slider(props, SETTING_HUE_VARIATION,
+					obs_module_text("HueVariation"),
+					0.0, 1.0, 0.01);
+	obs_properties_add_float_slider(props, SETTING_COLOR_JITTER,
+					obs_module_text("ColorJitter"),
+					0.0, 1.0, 0.01);
+	obs_properties_add_float_slider(props, SETTING_TWINKLE_AMOUNT,
+					obs_module_text("TwinkleAmount"),
+					0.0, 1.0, 0.01);
+	obs_properties_add_float_slider(props, SETTING_TWINKLE_SPEED,
+					obs_module_text("TwinkleSpeed"),
+					0.0, 10.0, 0.1);
+
+	obs_properties_add_bool(props, SETTING_USE_INTERNAL_BG,
+				obs_module_text("UseInternalBackground"));
+	obs_properties_add_color_alpha(props, SETTING_BACKGROUND_COLOR,
+				       obs_module_text("BackgroundColor"));
+	obs_properties_add_float_slider(props, SETTING_BACKGROUND_ALPHA,
+					obs_module_text("BackgroundAlpha"),
+					0.0, 1.0, 0.01);
+
+	obs_properties_add_float_slider(props, "scroll_speed.x",
+					obs_module_text("ScrollSpeedX"),
+					-2.0, 2.0, 0.01);
+	obs_properties_add_float_slider(props, "scroll_speed.y",
+					obs_module_text("ScrollSpeedY"),
+					-2.0, 2.0, 0.01);
+	obs_properties_add_float_slider(props, "scroll_offset.x",
+					obs_module_text("ScrollOffsetX"),
+					-5.0, 5.0, 0.01);
+	obs_properties_add_float_slider(props, "scroll_offset.y",
+					obs_module_text("ScrollOffsetY"),
+					-5.0, 5.0, 0.01);
+	obs_properties_add_float_slider(props, SETTING_DRIFT_AMOUNT,
+					obs_module_text("DriftAmount"),
+					0.0, 1.0, 0.01);
+	obs_properties_add_float_slider(props, SETTING_DRIFT_SPEED,
+					obs_module_text("DriftSpeed"),
+					0.0, 10.0, 0.1);
+	obs_properties_add_float_slider(props, SETTING_PULSE_AMOUNT,
+					obs_module_text("PulseAmount"),
+					0.0, 1.0, 0.01);
+	obs_properties_add_float_slider(props, SETTING_PULSE_SPEED,
+					obs_module_text("PulseSpeed"),
+					0.0, 10.0, 0.1);
+
+	obs_property_t *blend_mode = obs_properties_add_list(
+		props, SETTING_BLEND_MODE, obs_module_text("BlendMode"),
+		OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
+	obs_property_list_add_int(blend_mode,
+				  obs_module_text("BlendNormal"), 0);
+	obs_property_list_add_int(blend_mode,
+				  obs_module_text("BlendAdd"), 1);
+	obs_property_list_add_int(blend_mode,
+				  obs_module_text("BlendMultiply"), 2);
+	obs_property_list_add_int(blend_mode,
+				  obs_module_text("BlendScreen"), 3);
+
 	return props;
 }
 
@@ -414,6 +534,8 @@ static void tilegen_defaults(obs_data_t *settings)
 	obs_data_set_default_double(settings, SETTING_DENSITY, 20.0);
 	obs_data_set_default_bool(settings, SETTING_SQUARE_CELLS, false);
 	obs_data_set_default_double(settings, SETTING_GAP, 0.0);
+	obs_data_set_default_double(settings, SETTING_SEED, 0.0);
+	obs_data_set_default_double(settings, SETTING_PATTERN_SCALE, 1.0);
 
 	obs_data_set_default_int(settings, SETTING_SHAPE_TYPE, 0);
 	obs_data_set_default_double(settings, SETTING_SHAPE_SIZE, 0.5);
@@ -443,6 +565,7 @@ static void tilegen_defaults(obs_data_t *settings)
 	obs_data_set_default_double(settings, SETTING_SIZE_VARIATION, 0.0);
 	obs_data_set_default_double(settings, SETTING_ROTATION_VARIATION, 0.0);
 	obs_data_set_default_double(settings, SETTING_HUE_VARIATION, 0.0);
+	obs_data_set_default_double(settings, SETTING_COLOR_JITTER, 0.0);
 	obs_data_set_default_double(settings, SETTING_TWINKLE_AMOUNT, 0.0);
 	obs_data_set_default_double(settings, SETTING_TWINKLE_SPEED, 1.0);
 
@@ -454,6 +577,11 @@ static void tilegen_defaults(obs_data_t *settings)
 	obs_data_set_default_double(settings, SETTING_DRIFT_SPEED, 1.0);
 	obs_data_set_default_double(settings, SETTING_PULSE_AMOUNT, 0.0);
 	obs_data_set_default_double(settings, SETTING_PULSE_SPEED, 1.0);
+
+	obs_data_set_default_int(settings, SETTING_BLEND_MODE, 0);
+	obs_data_set_default_int(settings, SETTING_USE_INTERNAL_BG, 0);
+	obs_data_set_default_int(settings, SETTING_BACKGROUND_COLOR, 0xFF000000);
+	obs_data_set_default_double(settings, SETTING_BACKGROUND_ALPHA, 1.0);
 }
 
 struct obs_source_info tilegen_filter = {

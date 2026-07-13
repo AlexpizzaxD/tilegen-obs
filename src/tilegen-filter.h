@@ -12,6 +12,8 @@ struct tilegen_settings {
 	float density;
 	bool square_cells;
 	float gap;
+	float seed;
+	float pattern_scale;
 
 	// Shape
 	int shape_type;
@@ -50,6 +52,7 @@ struct tilegen_settings {
 	float size_variation;
 	float rotation_variation;
 	float hue_variation;
+	float color_jitter;
 	float twinkle_amount;
 	float twinkle_speed;
 
@@ -60,6 +63,12 @@ struct tilegen_settings {
 	float drift_speed;
 	float pulse_amount;
 	float pulse_speed;
+
+	// Blend
+	int blend_mode;
+	int use_internal_background;
+	struct vec4 background_color;
+	float background_alpha;
 };
 
 extern struct obs_source_info tilegen_filter;
