@@ -9,8 +9,7 @@
 // Proyecto personal asistido por IA para LaViduka.
 //
 // Apply as filter to a Colour Source or any video source
-
-
+//
 // ============================================================
 
 uniform float4x4 ViewProj;
@@ -88,11 +87,9 @@ uniform float shape_mix_chance = 0.0;
 
 uniform int use_source_instead_of_image = 1;
 
-uniform texture2d source_tex
-;
+uniform texture2d source_tex;
 
-uniform texture2d image_tex
-;
+uniform texture2d image_tex;
 
 uniform float image_aspect_override = 0.0;
 
@@ -100,8 +97,7 @@ uniform float image_aspect_override = 0.0;
 // 5. ATLAS DE CARACTERES
 // ============================================================
 
-uniform texture2d font_atlas
-;
+uniform texture2d font_atlas;
 
 uniform int font_cols = 16;
 
@@ -272,7 +268,27 @@ GridResult hexGrid(float2 uv, float cell_count)
     float2 a = fmod(hex_uv, r_vec) - h;
     float2 b = fmod(hex_uv - h, r_vec) - h;
 
-    bool useA = dot(a, a) = 1.0) {
+    bool useA = dot(a, a) < dot(b, b);
+    float2 cell = useA ? (hex_uv - a) : (hex_uv - b);
+    float2 local = useA ? a : b;
+
+    // Escalar para que el hexagono inscrito toque los bordes de la celda
+    local *= 2.0 / 1.73205080757;
+
+    GridResult r;
+    r.cell_id = floor(cell + 0.5);
+    r.local = local;
+    return r;
+}
+
+// ============================================================
+// Image / source sampling
+// ============================================================
+
+float2 fitUV(float2 p, float texAspect)
+{
+    float2 scale;
+    if (texAspect >= 1.0) {
         scale = float2(1.0, 1.0 / texAspect);
     } else {
         scale = float2(texAspect, 1.0);
@@ -285,7 +301,7 @@ float4 sampleImage(float2 p)
     float aspect = (image_aspect_override > 0.0) ? image_aspect_override : (uv_size.x / uv_size.y);
     float2 img_uv = fitUV(p, aspect);
 
-    if (img_uv.x  1.05 || img_uv.y  1.05) {
+    if (img_uv.x < -0.05 || img_uv.x > 1.05 || img_uv.y < -0.05 || img_uv.y > 1.05) {
         return float4(0.0, 0.0, 0.0, 0.0);
     }
 
@@ -344,7 +360,16 @@ float2 fitFontUV(float2 p)
 
 float3 applySecondaryColor(float3 col, float2 local, float2 cell_id, int active_shape)
 {
-    if (color_mix  0.5 ? 1.0 : 0.0;
+    if (color_mix <= 0.0) return col;
+
+    float t = 0.0;
+    if (color_mode == 0) {
+        t = 1.0;
+    } else if (color_mode == 1) {
+        float dist = length(local) * 1.5;
+        t = saturate(dist);
+    } else if (color_mode == 2) {
+        t = hash1(cell_id) > 0.5 ? 1.0 : 0.0;
     } else if (color_mode == 3) {
         t = (active_shape == shape_type_b) ? 1.0 : 0.0;
     }
@@ -433,7 +458,16 @@ float4 mainImage(VertData v_in) : TARGET
 
     // Shape Mix: esta celda usa Shape B en vez de Shape A segun la chance
     int active_shape = shape_type;
-    if (shape_mix_chance > 0.0 && rnd_shape_mix  0.0) {
+    if (shape_mix_chance > 0.0 && rnd_shape_mix < shape_mix_chance) {
+        active_shape = shape_type_b;
+    }
+
+    // Image / OBS Source: muestreo directo de textura con correccion de aspecto
+    if (active_shape == 7) {
+        float4 img_col = sampleImage(p);
+        float alpha = img_col.a * twinkle * base_color.a;
+        float3 col = img_col.rgb;
+        if (hue_variation > 0.0) {
             col = hueShift(col, (rnd_hue - 0.5) * hue_variation);
         }
         col = applySecondaryColor(col, local, cell_id, active_shape);
@@ -444,7 +478,7 @@ float4 mainImage(VertData v_in) : TARGET
     if (active_shape == 8) {
         float2 fp = fitFontUV(p);
         float2 img_uv = fp + 0.5;
-        if (img_uv.x  1.0 || img_uv.y  1.0) {
+        if (img_uv.x < 0.0 || img_uv.x > 1.0 || img_uv.y < 0.0 || img_uv.y > 1.0) {
             return float4(0.0, 0.0, 0.0, 0.0);
         }
         float4 char_col = sampleFontAtlas(fp);
