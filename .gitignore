@@ -17,6 +17,9 @@
 !LICENSE
 !README.md
 
+# Exclude install script
+/install-tilegen-obs.bat
+
 # Exclude lock files
 *.lock.json
 
