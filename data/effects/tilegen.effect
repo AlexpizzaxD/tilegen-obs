@@ -1,35 +1,485 @@
+// ============================================================
+// Pattern Tiler - v1.1
+// Effect for TileGen OBS plugin
+// https://github.com/AlexpizzaxD/tilegen-obs
+//
+// Inspirado en "OBS Shader - StreamUP Pattern Tiler" por Andilippi
+// https://andilippi.co.uk
+//
+// Proyecto personal asistido por IA para LaViduka.
+//
+// Apply as filter to a Colour Source or any video source
+
+
+// ============================================================
+
 uniform float4x4 ViewProj;
 uniform texture2d image;
 
+uniform float elapsed_time;
+uniform float2 uv_size;
+
 sampler_state textureSampler {
-	Filter = Linear;
-	AddressU = Clamp;
-	AddressV = Clamp;
+    Filter    = Linear;
+    AddressU  = Clamp;
+    AddressV  = Clamp;
+};
+
+sampler_state imageSampler {
+    Filter    = Linear;
+    AddressU  = Clamp;
+    AddressV  = Clamp;
 };
 
 struct VertData {
-	float4 pos : POSITION;
-	float2 uv : TEXCOORD0;
+    float4 pos : POSITION;
+    float2 uv  : TEXCOORD0;
 };
 
 VertData VSDefault(VertData v_in)
 {
-	VertData vert_out;
-	vert_out.pos = mul(float4(v_in.pos.xyz, 1.0), ViewProj);
-	vert_out.uv = v_in.uv;
-	return vert_out;
+    VertData vert_out;
+    vert_out.pos = mul(float4(v_in.pos.xyz, 1.0), ViewProj);
+    vert_out.uv  = v_in.uv;
+    return vert_out;
 }
 
-float4 PSDefault(VertData v_in) : TARGET
+// ============================================================
+// 1. REJILLA
+// ============================================================
+
+uniform int grid_pattern = 0;
+
+uniform float density = 20.0;
+
+uniform int square_cells = 0;
+
+uniform float gap = 0.0;
+
+// ============================================================
+// 2. FORMA PRINCIPAL
+// ============================================================
+
+uniform int shape_type = 0;
+
+uniform float shape_size = 0.5;
+
+uniform float edge_softness = 0.02;
+
+uniform float rotation_deg = 0.0;
+
+uniform float auto_rotate_speed = 0.0;
+
+uniform int shape_sides = 5;
+
+uniform float star_sharpness = 3.0;
+
+// ============================================================
+// 3. MEZCLA DE FORMAS
+// ============================================================
+
+uniform int shape_type_b = 6;
+
+uniform float shape_mix_chance = 0.0;
+
+// ============================================================
+// 4. IMAGEN / FUENTE OBS
+// ============================================================
+
+uniform int use_source_instead_of_image = 1;
+
+uniform texture2d source_tex
+;
+
+uniform texture2d image_tex
+;
+
+uniform float image_aspect_override = 0.0;
+
+// ============================================================
+// 5. ATLAS DE CARACTERES
+// ============================================================
+
+uniform texture2d font_atlas
+;
+
+uniform int font_cols = 16;
+
+uniform int font_rows = 16;
+
+uniform int font_index = 0;
+
+uniform float font_aspect_override = 0.0;
+
+// ============================================================
+// 6. COLOR
+// ============================================================
+
+uniform float4 base_color = {1.0, 1.0, 1.0, 1.0};
+
+uniform float4 secondary_color = {1.0, 0.0, 0.0, 1.0};
+
+uniform int color_mode = 0;
+
+uniform float color_mix = 0.0;
+
+// ============================================================
+// 7. VARIACION POR CELDA
+// ============================================================
+
+uniform float visibility_chance = 1.0;
+
+uniform float size_variation = 0.0;
+
+uniform float rotation_variation = 0.0;
+
+uniform float hue_variation = 0.0;
+
+uniform float twinkle_amount = 0.0;
+
+uniform float twinkle_speed = 1.0;
+
+// ============================================================
+// 8. MOVIMIENTO
+// ============================================================
+
+uniform float2 scroll_speed = {0.0, 0.0};
+
+uniform float2 scroll_offset = {0.0, 0.0};
+
+uniform float drift_amount = 0.0;
+
+uniform float drift_speed = 1.0;
+
+uniform float pulse_amount = 0.0;
+
+uniform float pulse_speed = 1.0;
+
+// ============================================================
+// Utilidades
+// ============================================================
+
+float2 hash2(float2 p)
 {
-	return image.Sample(textureSampler, v_in.uv);
+    p = float2(dot(p, float2(127.1, 311.7)), dot(p, float2(269.5, 183.3)));
+    return frac(sin(p) * 43758.5453123);
+}
+
+float hash1(float2 p)
+{
+    return hash2(p).x;
+}
+
+float2 rotate2D(float2 p, float angle_rad)
+{
+    float s = sin(angle_rad);
+    float c = cos(angle_rad);
+    return float2(p.x * c - p.y * s, p.x * s + p.y * c);
+}
+
+float sdPolygon(float2 p, int n)
+{
+    float a = atan2(p.x, p.y) + 3.14159265359;
+    float r = 6.28318530718 / float(n);
+    float d = cos(floor(0.5 + a / r) * r - a) * length(p);
+    return d - 0.5;
+}
+
+float sdStar(float2 p, int n, float m)
+{
+    float an = 3.14159265359 / float(n);
+    float en = 3.14159265359 / m;
+    float2 acs = float2(cos(an), sin(an));
+    float2 ecs = float2(cos(en), sin(en));
+
+    float bn = fmod(atan2(p.x, p.y), 2.0 * an) - an;
+    float2 pp = length(p) * float2(cos(bn), abs(sin(bn)));
+
+    pp -= 0.5 * acs;
+    pp += ecs * clamp(-dot(pp, ecs), 0.0, 0.5 * acs.y / ecs.y);
+    return length(pp) * sign(pp.x);
+}
+
+float shapeSDF(float2 p, int type)
+{
+    if (type == 0) {
+        return length(p) - 0.5;
+    } else if (type == 1) {
+        return abs(length(p) - 0.35) - 0.12;
+    } else if (type == 2) {
+        float2 d = abs(p) - float2(0.5, 0.5);
+        return max(d.x, d.y);
+    } else if (type == 3) {
+        return abs(p.x) + abs(p.y) - 0.6;
+    } else if (type == 4) {
+        float2 d1 = abs(p) - float2(0.5, 0.15);
+        float2 d2 = abs(p) - float2(0.15, 0.5);
+        return min(max(d1.x, d1.y), max(d2.x, d2.y));
+    } else if (type == 5) {
+        int n = clamp(shape_sides, 3, 12);
+        return sdPolygon(p, n);
+    } else if (type == 6) {
+        int n = clamp(shape_sides, 3, 12);
+        float m = clamp(star_sharpness, 2.0, float(n));
+        return sdStar(p, n, m);
+    }
+    return length(p) - 0.5;
+}
+
+float3 hueShift(float3 col, float shift)
+{
+    float3 k = float3(0.57735, 0.57735, 0.57735);
+    float cosA = cos(shift * 6.2831853);
+    float sinA = sin(shift * 6.2831853);
+    return col * cosA + cross(k, col) * sinA + k * dot(k, col) * (1.0 - cosA);
+}
+
+// ============================================================
+// Grid helpers
+// ============================================================
+
+struct GridResult {
+    float2 cell_id;
+    float2 local;
+};
+
+GridResult squareGrid(float2 uv, float cell_count)
+{
+    float2 grid_uv = uv * cell_count;
+    GridResult r;
+    r.cell_id = floor(grid_uv);
+    r.local = frac(grid_uv) - 0.5;
+    return r;
+}
+
+GridResult brickGrid(float2 uv, float cell_count)
+{
+    float2 grid_uv = uv * cell_count;
+    float row = floor(grid_uv.y);
+    float offset = fmod(row, 2.0) * 0.5;
+    grid_uv.x += offset;
+    GridResult r;
+    r.cell_id = floor(grid_uv);
+    r.local = frac(grid_uv) - 0.5;
+    return r;
+}
+
+GridResult hexGrid(float2 uv, float cell_count)
+{
+    float2 hex_uv = uv * cell_count;
+    float2 r_vec = float2(1.0, 1.73205080757);
+    float2 h = r_vec * 0.5;
+    float2 a = fmod(hex_uv, r_vec) - h;
+    float2 b = fmod(hex_uv - h, r_vec) - h;
+
+    bool useA = dot(a, a) = 1.0) {
+        scale = float2(1.0, 1.0 / texAspect);
+    } else {
+        scale = float2(texAspect, 1.0);
+    }
+    return p * scale + 0.5;
+}
+
+float4 sampleImage(float2 p)
+{
+    float aspect = (image_aspect_override > 0.0) ? image_aspect_override : (uv_size.x / uv_size.y);
+    float2 img_uv = fitUV(p, aspect);
+
+    if (img_uv.x  1.05 || img_uv.y  1.05) {
+        return float4(0.0, 0.0, 0.0, 0.0);
+    }
+
+    float4 col;
+    if (use_source_instead_of_image != 0) {
+        col = source_tex.Sample(imageSampler, img_uv);
+    } else {
+        col = image_tex.Sample(imageSampler, img_uv);
+    }
+
+    // Suavizado en los bordes
+    float2 fadeXY = saturate(img_uv * 20.0) * saturate((1.0 - img_uv) * 20.0);
+    col.a *= fadeXY.x * fadeXY.y;
+
+    return col;
+}
+
+// ============================================================
+// Font atlas sampling
+// ============================================================
+
+float4 sampleFontAtlas(float2 p)
+{
+    int cols = max(font_cols, 1);
+    int rows = max(font_rows, 1);
+    int total = cols * rows;
+    int idx = clamp(font_index, 0, total - 1);
+
+    int col = idx % cols;
+    int row = idx / cols;
+
+    float2 cellSize = float2(1.0 / float(cols), 1.0 / float(rows));
+    float2 cellUV = p + 0.5; // [-0.5,0.5] -> [0,1]
+
+    float2 atlasUV = float2(float(col), float(row)) * cellSize + cellUV * cellSize;
+
+    return font_atlas.Sample(imageSampler, atlasUV);
+}
+
+float2 fitFontUV(float2 p)
+{
+    float atlasAspect = float(font_cols) / float(font_rows);
+    float charAspect = (font_aspect_override > 0.0) ? font_aspect_override : atlasAspect;
+    float2 scale;
+    if (charAspect >= 1.0) {
+        scale = float2(1.0, 1.0 / charAspect);
+    } else {
+        scale = float2(charAspect, 1.0);
+    }
+    return p * scale;
+}
+
+// ============================================================
+// Color blending
+// ============================================================
+
+float3 applySecondaryColor(float3 col, float2 local, float2 cell_id, int active_shape)
+{
+    if (color_mix  0.5 ? 1.0 : 0.0;
+    } else if (color_mode == 3) {
+        t = (active_shape == shape_type_b) ? 1.0 : 0.0;
+    }
+
+    return lerp(col, secondary_color.rgb, color_mix * secondary_color.a * t);
+}
+
+// ============================================================
+// Pixel shader principal
+// ============================================================
+
+float4 mainImage(VertData v_in) : TARGET
+{
+    float aspect = uv_size.x / uv_size.y;
+    float2 uv = v_in.uv;
+
+    if (square_cells == 0) {
+        uv.x *= aspect;
+    }
+
+    // Scroll + offset: desplaza todo el grid
+    uv += scroll_offset + scroll_speed * elapsed_time;
+
+    // Coordenadas de grid segun patron
+    float cell_count = max(density, 1.0);
+    GridResult grid;
+    if (grid_pattern == 0) {
+        grid = squareGrid(uv, cell_count);
+    } else if (grid_pattern == 1) {
+        grid = brickGrid(uv, cell_count);
+    } else {
+        grid = hexGrid(uv, cell_count);
+    }
+
+    float2 cell_id = grid.cell_id;
+    float2 cell_local = grid.local;
+
+    // Random por celda (estable, no cambia frame a frame salvo por time)
+    float2 rnd = hash2(cell_id);
+    float rnd_visible   = rnd.x;
+    float rnd_size      = hash1(cell_id + 17.0);
+    float rnd_rotation  = hash1(cell_id + 31.0);
+    float rnd_hue       = hash1(cell_id + 53.0);
+    float rnd_phase     = hash1(cell_id + 71.0) * 6.2831853;
+    float rnd_shape_mix = hash1(cell_id + 97.0);
+
+    // Visibility (chance binaria por celda)
+    if (rnd_visible > visibility_chance) {
+        return float4(0.0, 0.0, 0.0, 0.0);
+    }
+
+    // Twinkle: fade in/out con fase propia por celda
+    float twinkle = 1.0;
+    if (twinkle_amount > 0.0) {
+        float t = sin(elapsed_time * twinkle_speed + rnd_phase) * 0.5 + 0.5;
+        twinkle = lerp(1.0, t, twinkle_amount);
+    }
+
+    // Drift: la celda se mueve alrededor de su centro
+    float2 local = cell_local;
+    if (drift_amount > 0.0) {
+        float2 drift_offset = float2(
+            sin(elapsed_time * drift_speed + rnd_phase),
+            cos(elapsed_time * drift_speed * 1.3 + rnd_phase)
+        ) * 0.15 * drift_amount;
+        local -= drift_offset;
+    }
+
+    // Aplicar gap: reduce el area util dentro de cada celda
+    float effective_size = max(shape_size * (1.0 - gap), 0.001);
+
+    // Tamano final: base +/- variacion + pulse
+    float size_mult = 1.0 + (rnd_size - 0.5) * 2.0 * size_variation;
+    if (pulse_amount > 0.0) {
+        float p = sin(elapsed_time * pulse_speed + rnd_phase) * 0.5 + 0.5;
+        size_mult *= lerp(1.0, 0.5 + p, pulse_amount);
+    }
+    float final_size = max(effective_size * size_mult, 0.001);
+
+    // Rotacion final: base + auto-rotate + variacion aleatoria por celda
+    float rot_deg = rotation_deg + auto_rotate_speed * elapsed_time;
+    rot_deg += (rnd_rotation - 0.5) * 2.0 * rotation_variation;
+    float rot_rad = radians(rot_deg);
+
+    float2 p = rotate2D(local, -rot_rad) / final_size;
+
+    // Shape Mix: esta celda usa Shape B en vez de Shape A segun la chance
+    int active_shape = shape_type;
+    if (shape_mix_chance > 0.0 && rnd_shape_mix  0.0) {
+            col = hueShift(col, (rnd_hue - 0.5) * hue_variation);
+        }
+        col = applySecondaryColor(col, local, cell_id, active_shape);
+        return float4(col * alpha, alpha);
+    }
+
+    // Character atlas: cualquier caracter desde una textura de cuadricula
+    if (active_shape == 8) {
+        float2 fp = fitFontUV(p);
+        float2 img_uv = fp + 0.5;
+        if (img_uv.x  1.0 || img_uv.y  1.0) {
+            return float4(0.0, 0.0, 0.0, 0.0);
+        }
+        float4 char_col = sampleFontAtlas(fp);
+        float alpha = char_col.a * twinkle * base_color.a;
+        float3 col = char_col.rgb;
+        if (hue_variation > 0.0) {
+            col = hueShift(col, (rnd_hue - 0.5) * hue_variation);
+        }
+        col = applySecondaryColor(col, local, cell_id, active_shape);
+        return float4(col * alpha, alpha);
+    }
+
+    // SDF shape
+    float d = shapeSDF(p, active_shape);
+
+    // Softness: transicion suave en vez de corte duro
+    float aa = max(edge_softness, 0.001) / max(final_size, 0.001);
+    float mask = 1.0 - smoothstep(0.0, aa, d);
+
+    float alpha = mask * twinkle * base_color.a;
+
+    float3 col = base_color.rgb;
+    if (hue_variation > 0.0) {
+        col = hueShift(col, (rnd_hue - 0.5) * hue_variation);
+    }
+    col = applySecondaryColor(col, local, cell_id, active_shape);
+
+    return float4(col * alpha, alpha);
 }
 
 technique Draw
 {
-	pass
-	{
-		vertex_shader = VSDefault(v_in);
-		pixel_shader = PSDefault(v_in);
-	}
+    pass
+    {
+        vertex_shader = VSDefault(v_in);
+        pixel_shader  = mainImage(v_in);
+    }
 }
