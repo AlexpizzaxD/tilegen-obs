@@ -166,12 +166,17 @@ static void *tilegen_create(obs_data_t *settings, obs_source_t *source)
 
 	char *effect_path = obs_module_file("effects/tilegen.effect");
 	if (effect_path) {
-		tf->effect = gs_effect_create_from_file(effect_path, NULL);
+		char *error = NULL;
+		tf->effect = gs_effect_create_from_file(effect_path, &error);
+		if (!tf->effect && error) {
+			obs_log(LOG_ERROR, "Failed to load tilegen.effect: %s",
+				error);
+			bfree(error);
+		} else if (!tf->effect) {
+			obs_log(LOG_ERROR,
+				"Failed to load tilegen.effect (unknown error)");
+		}
 		bfree(effect_path);
-	}
-
-	if (!tf->effect) {
-		obs_log(LOG_ERROR, "Failed to load tilegen.effect");
 	}
 
 	tilegen_update(tf, settings);

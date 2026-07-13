@@ -47,51 +47,51 @@ VertData VSDefault(VertData v_in)
 // 1. REJILLA
 // ============================================================
 
-uniform int grid_pattern = 0;
+uniform int grid_pattern;
 
-uniform float density = 20.0;
+uniform float density;
 
-uniform int square_cells = 0;
+uniform bool square_cells;
 
-uniform float gap = 0.0;
+uniform float gap;
 
 // ============================================================
 // 2. FORMA PRINCIPAL
 // ============================================================
 
-uniform int shape_type = 0;
+uniform int shape_type;
 
-uniform float shape_size = 0.5;
+uniform float shape_size;
 
-uniform float edge_softness = 0.02;
+uniform float edge_softness;
 
-uniform float rotation_deg = 0.0;
+uniform float rotation_deg;
 
-uniform float auto_rotate_speed = 0.0;
+uniform float auto_rotate_speed;
 
-uniform int shape_sides = 5;
+uniform int shape_sides;
 
-uniform float star_sharpness = 3.0;
+uniform float star_sharpness;
 
 // ============================================================
 // 3. MEZCLA DE FORMAS
 // ============================================================
 
-uniform int shape_type_b = 6;
+uniform int shape_type_b;
 
-uniform float shape_mix_chance = 0.0;
+uniform float shape_mix_chance;
 
 // ============================================================
 // 4. IMAGEN / FUENTE OBS
 // ============================================================
 
-uniform int use_source_instead_of_image = 1;
+uniform int use_source_instead_of_image;
 
 uniform texture2d source_tex;
 
 uniform texture2d image_tex;
 
-uniform float image_aspect_override = 0.0;
+uniform float image_aspect_override;
 
 // ============================================================
 // 5. ATLAS DE CARACTERES
@@ -99,57 +99,57 @@ uniform float image_aspect_override = 0.0;
 
 uniform texture2d font_atlas;
 
-uniform int font_cols = 16;
+uniform int font_cols;
 
-uniform int font_rows = 16;
+uniform int font_rows;
 
-uniform int font_index = 0;
+uniform int font_index;
 
-uniform float font_aspect_override = 0.0;
+uniform float font_aspect_override;
 
 // ============================================================
 // 6. COLOR
 // ============================================================
 
-uniform float4 base_color = {1.0, 1.0, 1.0, 1.0};
+uniform float4 base_color;
 
-uniform float4 secondary_color = {1.0, 0.0, 0.0, 1.0};
+uniform float4 secondary_color;
 
-uniform int color_mode = 0;
+uniform int color_mode;
 
-uniform float color_mix = 0.0;
+uniform float color_mix;
 
 // ============================================================
 // 7. VARIACION POR CELDA
 // ============================================================
 
-uniform float visibility_chance = 1.0;
+uniform float visibility_chance;
 
-uniform float size_variation = 0.0;
+uniform float size_variation;
 
-uniform float rotation_variation = 0.0;
+uniform float rotation_variation;
 
-uniform float hue_variation = 0.0;
+uniform float hue_variation;
 
-uniform float twinkle_amount = 0.0;
+uniform float twinkle_amount;
 
-uniform float twinkle_speed = 1.0;
+uniform float twinkle_speed;
 
 // ============================================================
 // 8. MOVIMIENTO
 // ============================================================
 
-uniform float2 scroll_speed = {0.0, 0.0};
+uniform float2 scroll_speed;
 
-uniform float2 scroll_offset = {0.0, 0.0};
+uniform float2 scroll_offset;
 
-uniform float drift_amount = 0.0;
+uniform float drift_amount;
 
-uniform float drift_speed = 1.0;
+uniform float drift_speed;
 
-uniform float pulse_amount = 0.0;
+uniform float pulse_amount;
 
-uniform float pulse_speed = 1.0;
+uniform float pulse_speed;
 
 // ============================================================
 // Utilidades
