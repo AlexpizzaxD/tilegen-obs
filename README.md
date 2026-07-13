@@ -25,6 +25,8 @@ This project is inspired by **OBS Shader - StreamUP Pattern Tiler** by [Andilipp
 - CMake 3.28+
 - Git
 
+Repository: https://github.com/AlexpizzaxD/tilegen-obs
+
 ### Build with VSCode
 
 1. Open this folder in VSCode.
