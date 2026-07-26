@@ -1,10 +1,12 @@
 // ============================================================
-// Pattern Tiler - v1.1
+// Pattern Tiler - v2.0
 // Effect for TileGen OBS plugin
 // https://github.com/AlexpizzaxD/tilegen-obs
 //
 // Inspirado en "OBS Shader - StreamUP Pattern Tiler" por Andilippi
 // https://andilippi.co.uk
+// Mejoras de shaders basadas en ViduGenerator por Exeldro
+// https://github.com/exeldro/obs-shaderfilter
 //
 // Proyecto personal asistido por IA para LaViduka.
 //
@@ -17,6 +19,7 @@ uniform texture2d image;
 
 uniform float elapsed_time;
 uniform float2 uv_size;
+uniform float2 render_target_size;
 
 sampler_state textureSampler {
     Filter    = Linear;
@@ -59,6 +62,10 @@ uniform float seed;
 
 uniform float pattern_scale;
 
+uniform float pattern_offset_x;
+
+uniform float pattern_offset_y;
+
 // ============================================================
 // 2. FORMA PRINCIPAL
 // ============================================================
@@ -78,6 +85,14 @@ uniform int shape_sides;
 uniform float star_sharpness;
 
 // ============================================================
+// 2b. GEOMETRIA DE FORMA (nuevo)
+// ============================================================
+
+uniform float line_thickness;
+
+uniform float rounded_square_radius;
+
+// ============================================================
 // 3. MEZCLA DE FORMAS
 // ============================================================
 
@@ -85,35 +100,64 @@ uniform int shape_type_b;
 
 uniform float shape_mix_chance;
 
-// ============================================================
-// 4. IMAGEN / FUENTE OBS (no implementado)
-// ============================================================
-// uniform int use_source_instead_of_image;
-// uniform texture2d source_tex;
-// uniform texture2d image_tex;
-// uniform float image_aspect_override;
+uniform float shape_mix_blend_width;
+
+uniform bool shape_mix_independent_motion;
 
 // ============================================================
-// 5. ATLAS DE CARACTERES (no implementado)
+// 4. IMAGEN / FUENTE OBS
 // ============================================================
-// uniform texture2d font_atlas;
-// uniform int font_cols;
-// uniform int font_rows;
-// uniform int font_index;
-// uniform float font_aspect_override;
+
+uniform int use_source_instead_of_image;
+
+uniform texture2d source_tex;
+
+uniform texture2d image_tex;
+
+uniform float image_aspect_override;
+
+uniform int image_or_source_loaded;
+
+uniform float image_rotation;
+
+uniform float image_scale;
+
+uniform float image_offset_x;
+
+uniform float image_offset_y;
+
+uniform int image_fit_mode;
+
+uniform bool image_use_shape_mask;
+
+uniform int image_mask_shape;
 
 // ============================================================
-// 6. COLOR
+// 5. COLOR
 // ============================================================
 
 uniform float4 base_color;
 
-// uniform float4 secondary_color;
-// uniform int color_mode;
-// uniform float color_mix;
+uniform float4 secondary_color;
+
+uniform int color_mode;
+
+uniform float color_mix;
 
 // ============================================================
-// 7. VARIACION POR CELDA
+// 5b. PALETA (nuevo: hasta 4 colores)
+// ============================================================
+
+uniform int palette_count;
+
+uniform float4 color_b;
+
+uniform float4 color_c;
+
+uniform float4 color_d;
+
+// ============================================================
+// 6. VARIACION POR CELDA
 // ============================================================
 
 uniform float visibility_chance;
@@ -131,12 +175,12 @@ uniform float twinkle_amount;
 uniform float twinkle_speed;
 
 // ============================================================
-// 8. MOVIMIENTO
+// 7. MOVIMIENTO
 // ============================================================
 
-uniform float2 scroll_speed;
+uniform float scroll_speed;
 
-uniform float2 scroll_offset;
+uniform float scroll_angle;
 
 uniform float drift_amount;
 
@@ -147,20 +191,56 @@ uniform float pulse_amount;
 uniform float pulse_speed;
 
 // ============================================================
-// 9. BLEND MODE
+// 7b. MOVIMIENTO AVANZADO (nuevo)
 // ============================================================
 
-uniform int blend_mode;
+uniform float wave_amount;
+
+uniform float wave_frequency;
+
+uniform float wave_speed;
+
+uniform float orbit_amount;
+
+uniform float orbit_speed;
 
 // ============================================================
-// 10. BACKGROUND OVERRIDE
+// 7c. GRADIENTE (nuevo)
+// ============================================================
+
+uniform int gradient_axis;
+
+uniform float gradient_size_amount;
+
+uniform float gradient_hue_amount;
+
+// ============================================================
+// 8. VIGNETTE / STROKE / GLOW
+// ============================================================
+
+uniform float stroke_width;
+
+uniform float4 stroke_color;
+
+uniform float vignette_amount;
+
+uniform float vignette_size;
+
+uniform float vignette_softness;
+
+uniform float glow_amount;
+
+uniform float glow_radius;
+
+uniform float4 glow_color;
+
+// ============================================================
+// 9. BACKGROUND OVERRIDE
 // ============================================================
 
 uniform int use_internal_background;
 
 uniform float4 background_color;
-
-uniform float background_alpha;
 
 // ============================================================
 // Utilidades
@@ -177,12 +257,23 @@ float hash1(float2 p)
     return hash2(p).x;
 }
 
+// Modulo correcto estilo GLSL: fmod() de HLSL puede devolver negativos
+// y rompe el doblado angular de sdStar en la mitad del circulo.
+float glslMod(float x, float y)
+{
+    return x - y * floor(x / y);
+}
+
 float2 rotate2D(float2 p, float angle_rad)
 {
     float s = sin(angle_rad);
     float c = cos(angle_rad);
     return float2(p.x * c - p.y * s, p.x * s + p.y * c);
 }
+
+// ============================================================
+// SDF: Formas
+// ============================================================
 
 float sdPolygon(float2 p, int n)
 {
@@ -199,15 +290,51 @@ float sdStar(float2 p, int n, float m)
     float2 acs = float2(cos(an), sin(an));
     float2 ecs = float2(cos(en), sin(en));
 
-    // HLSL no tiene mod, usamos frac para evitar el bug de fmod con negativos
-    // atan2 devuelve [-pi, pi]; sumamos pi y normalizamos con frac para obtener
-    // un angulo positivo en [0, 2*an] y luego lo centramos en [-an, an]
-    float bn = frac((atan2(p.x, p.y) + 3.14159265359) / (2.0 * an)) * 2.0 * an - an;
+    float bn = glslMod(atan2(p.x, p.y), 2.0 * an) - an;
     float2 pp = length(p) * float2(cos(bn), abs(sin(bn)));
 
     pp -= 0.5 * acs;
     pp += ecs * clamp(-dot(pp, ecs), 0.0, 0.5 * acs.y / ecs.y);
     return length(pp) * sign(pp.x);
+}
+
+float sdRoundedBox(float2 p, float2 half_extents, float r)
+{
+    float2 q = abs(p) - half_extents + r;
+    return min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - r;
+}
+
+float sdHeart(float2 p)
+{
+    p.x = abs(p.x);
+
+    if (p.y + p.x > 1.0)
+        return sqrt(dot(p - float2(0.25, 0.75), p - float2(0.25, 0.75))) - sqrt(2.0) / 4.0;
+    return sqrt(min(dot(p - float2(0.0, 1.0), p - float2(0.0, 1.0)),
+                    dot(p - 0.5 * max(p.x + p.y, 0.0),
+                        p - 0.5 * max(p.x + p.y, 0.0)))) * sign(p.x - p.y);
+}
+
+float sdCross(float2 p, float thickness)
+{
+    float2 d = abs(p) - float2(0.5, thickness);
+    if (d.x < d.y) d = d.yx;
+    return min(max(d.x, d.y), 0.0) + length(max(d, 0.0)) - 0.1;
+}
+
+float sdFrame(float2 p, float thickness)
+{
+    float2 d = abs(p) - float2(0.5, 0.5);
+    float outer = max(d.x, d.y);
+    float2 d2 = abs(p) - float2(0.5 - thickness, 0.5 - thickness);
+    float inner = max(d2.x, d2.y);
+    return max(outer, -inner);
+}
+
+float sdRect(float2 p, float2 half_size)
+{
+    float2 d = abs(p) - half_size;
+    return min(max(d.x, d.y), 0.0) + length(max(d, 0.0));
 }
 
 float shapeSDF(float2 p, int type)
@@ -232,6 +359,32 @@ float shapeSDF(float2 p, int type)
         int n = clamp(shape_sides, 3, 12);
         float m = clamp(star_sharpness, 2.0, float(n));
         return sdStar(p, n, m);
+    } else if (type == 8) {
+        return sdPolygon(p, 3);
+    } else if (type == 9) {
+        return sdHeart((float2(p.x, -p.y) + float2(0.0, 0.37)) * 1.5) / 1.5;
+    } else if (type == 10) {
+        float2 d1 = abs(p) - float2(0.5, 0.16);
+        float2 d2 = abs(p) - float2(0.13, 0.5);
+        return min(max(d1.x, d1.y), max(d2.x, d2.y));
+    } else if (type == 11) {
+        return sdFrame(p, 0.12);
+    } else if (type == 12) {
+        // Horizontal Line (parametric thickness)
+        return abs(p.y) - line_thickness;
+    } else if (type == 13) {
+        // Vertical Line (parametric thickness)
+        return abs(p.x) - line_thickness;
+    } else if (type == 14) {
+        // Rounded Square
+        float r = clamp(rounded_square_radius, 0.0, 0.5);
+        return sdRoundedBox(p, float2(0.5, 0.5) - r, r);
+    } else if (type == 15) {
+        // Cross (X): Plus rotado 45 grados
+        float2 pr = rotate2D(p, 0.785398163);
+        float2 d1 = abs(pr) - float2(0.5, 0.15);
+        float2 d2 = abs(pr) - float2(0.15, 0.5);
+        return min(max(d1.x, d1.y), max(d2.x, d2.y));
     }
     return length(p) - 0.5;
 }
@@ -242,6 +395,20 @@ float3 hueShift(float3 col, float shift)
     float cosA = cos(shift * 6.2831853);
     float sinA = sin(shift * 6.2831853);
     return col * cosA + cross(k, col) * sinA + k * dot(k, col) * (1.0 - cosA);
+}
+
+// ============================================================
+// Paleta de colores (hasta 4 colores)
+// ============================================================
+
+float4 pickPaletteColor(float t)
+{
+    int n = clamp(palette_count, 1, 4);
+    int idx = min(int(floor(t * float(n))), n - 1);
+    if (idx <= 0) return base_color;
+    if (idx == 1) return color_b;
+    if (idx == 2) return color_c;
+    return color_d;
 }
 
 // ============================================================
@@ -286,7 +453,6 @@ GridResult hexGrid(float2 uv, float cell_count)
     float2 cell = useA ? (hex_uv - a) : (hex_uv - b);
     float2 local = useA ? a : b;
 
-    // Escalar para que el hexagono inscrito toque los bordes de la celda
     local *= 2.0 / 1.73205080757;
 
     GridResult r;
@@ -299,8 +465,22 @@ GridResult hexGrid(float2 uv, float cell_count)
 // Image / source sampling
 // ============================================================
 
-float2 fitUV(float2 p, float texAspect)
+float2 fitUV(float2 p, float texAspect, int fit_mode)
 {
+    if (fit_mode == 1) {
+        // Contain: fit inside cell, may leave empty space
+        float2 s = (texAspect > 1.0)
+            ? float2(1.0, texAspect)
+            : float2(1.0 / texAspect, 1.0);
+        return p * s + 0.5;
+    } else if (fit_mode == 2) {
+        // Cover: fill cell, may crop
+        float2 s = (texAspect > 1.0)
+            ? float2(1.0 / texAspect, 1.0)
+            : float2(1.0, texAspect);
+        return p * s + 0.5;
+    }
+    // Stretch (default): ignore aspect, fill cell
     float2 scale;
     if (texAspect >= 1.0) {
         scale = float2(1.0, 1.0 / texAspect);
@@ -310,29 +490,37 @@ float2 fitUV(float2 p, float texAspect)
     return p * scale + 0.5;
 }
 
-// ============================================================
-// Image / source sampling (no implementado - texturas comentadas)
-// ============================================================
-// float4 sampleImage(float2 p)
-// {
-//     float aspect = (image_aspect_override > 0.0) ? image_aspect_override : (uv_size.x / uv_size.y);
-//     float2 img_uv = fitUV(p, aspect);
-//     ...
-// }
+float4 sampleImage(float2 p)
+{
+    float aspect = (image_aspect_override > 0.0) ? image_aspect_override : (uv_size.x / uv_size.y);
+    float2 img_uv = fitUV(p, aspect, image_fit_mode);
+    if (use_source_instead_of_image != 0) {
+        return source_tex.Sample(imageSampler, img_uv);
+    }
+    return image_tex.Sample(imageSampler, img_uv);
+}
 
 // ============================================================
-// Font atlas sampling (no implementado)
-// ============================================================
-// float4 sampleFontAtlas(float2 p) { ... }
-// float2 fitFontUV(float2 p) { ... }
-
-// ============================================================
-// Color blending (stub: no implementado)
+// Color blending
 // ============================================================
 
 float3 applySecondaryColor(float3 col, float2 local, float2 cell_id, int active_shape)
 {
-    return col;
+    if (color_mix <= 0.0) return col;
+
+    float t = 0.0;
+    if (color_mode == 0) {
+        t = 1.0;
+    } else if (color_mode == 1) {
+        float dist = length(local) * 1.5;
+        t = saturate(dist);
+    } else if (color_mode == 2) {
+        t = hash1(cell_id) > 0.5 ? 1.0 : 0.0;
+    } else if (color_mode == 3) {
+        t = (active_shape == shape_type_b) ? 1.0 : 0.0;
+    }
+
+    return lerp(col, secondary_color.rgb, color_mix * secondary_color.a * t);
 }
 
 // ============================================================
@@ -348,17 +536,40 @@ float4 mainImage(VertData v_in) : TARGET
         uv.x *= aspect;
     }
 
-    // Pattern scale: zoom general del patron (1.0 = sin cambio)
+    // Pattern scale
     uv *= pattern_scale;
 
-    // Scroll + offset: desplaza todo el grid
-    uv += scroll_offset + scroll_speed * elapsed_time;
+    // Pattern offset
+    uv += float2(pattern_offset_x, pattern_offset_y);
+
+    // Scroll
+    float2 scroll_dir = float2(cos(radians(scroll_angle)),
+                               sin(radians(scroll_angle)));
+    uv += scroll_dir * scroll_speed * elapsed_time;
+
+    // Orbit: todo el patron rota alrededor del centro del canvas
+    if (orbit_amount != 0.0) {
+        float2 canvas_center = float2(aspect * 0.5, 0.5);
+        float orbit_ang = radians(orbit_speed * elapsed_time * orbit_amount);
+        uv = rotate2D(uv - canvas_center, -orbit_ang) + canvas_center;
+    }
 
     // Coordenadas de grid segun patron
     float cell_count = max(density, 1.0);
     GridResult grid;
+
     if (grid_pattern == 0) {
-        grid = squareGrid(uv, cell_count);
+        // Square grid con redondeo para evitar celdas parciales en bordes
+        float2 grid_uv;
+        if (!square_cells) {
+            float grid_cols = max(round(cell_count * aspect), 1.0);
+            float grid_rows = max(round(cell_count), 1.0);
+            grid_uv = float2(uv.x * grid_cols / aspect, uv.y * grid_rows);
+        } else {
+            grid_uv = uv * cell_count;
+        }
+        grid.cell_id = floor(grid_uv);
+        grid.local = frac(grid_uv) - 0.5;
     } else if (grid_pattern == 1) {
         grid = brickGrid(uv, cell_count);
     } else {
@@ -368,10 +579,10 @@ float4 mainImage(VertData v_in) : TARGET
     float2 cell_id = grid.cell_id;
     float2 cell_local = grid.local;
 
-    // Seed: desplaza los valores random de cada celda para obtener patrones distintos
+    // Seed
     float2 seed_offset = float2(seed, seed * 1.3);
 
-    // Random por celda (estable, no cambia frame a frame salvo por time)
+    // Random por celda
     float2 rnd = hash2(cell_id + seed_offset);
     float rnd_visible   = rnd.x;
     float rnd_size      = hash1(cell_id + seed_offset + 17.0);
@@ -380,14 +591,11 @@ float4 mainImage(VertData v_in) : TARGET
     float rnd_phase     = hash1(cell_id + seed_offset + 71.0) * 6.2831853;
     float rnd_shape_mix = hash1(cell_id + seed_offset + 97.0);
 
-    // Muestrear la imagen base una sola vez (sera usada por blend mode)
+    // Muestrear la imagen base una sola vez
     float4 base;
     if (use_internal_background != 0) {
-        // Fondo interno: aplicar alpha del slider
-        base = float4(background_color.rgb,
-                      background_color.a * background_alpha);
+        base = background_color;
     } else {
-        // Fondo de la fuente original
         base = image.Sample(textureSampler, v_in.uv);
     }
 
@@ -395,17 +603,42 @@ float4 mainImage(VertData v_in) : TARGET
     float3 pattern_rgb = float3(0.0, 0.0, 0.0);
     float pattern_a = 0.0;
     int active_shape = shape_type;
+    float d_for_glow = 100.0;
 
     // Visibility (chance binaria por celda)
     if (rnd_visible <= visibility_chance) {
-        // Twinkle: fade in/out con fase propia por celda
+
+        // --- Shape Mix: decidido temprano para motion independiente ---
+        bool mix_is_blend = shape_mix_blend_width > 0.0 &&
+                            shape_type != 7 && shape_type_b != 7;
+        float mix_t = 0.0;
+        if (mix_is_blend) {
+            float half_w = shape_mix_blend_width * 0.5;
+            mix_t = 1.0 - smoothstep(shape_mix_chance - half_w,
+                                     shape_mix_chance + half_w,
+                                     rnd_shape_mix);
+        } else if (shape_mix_chance > 0.0 &&
+                   rnd_shape_mix < shape_mix_chance) {
+            active_shape = shape_type_b;
+        }
+
+        // Motion independiente para Forma B
+        if (shape_mix_independent_motion) {
+            if (mix_is_blend) {
+                rnd_phase += mix_t * 3.14159265;
+            } else if (active_shape == shape_type_b) {
+                rnd_phase += 3.14159265;
+            }
+        }
+
+        // Twinkle
         float twinkle = 1.0;
         if (twinkle_amount > 0.0) {
             float t = sin(elapsed_time * twinkle_speed + rnd_phase) * 0.5 + 0.5;
             twinkle = lerp(1.0, t, twinkle_amount);
         }
 
-        // Drift: la celda se mueve alrededor de su centro
+        // Drift
         float2 local = cell_local;
         if (drift_amount > 0.0) {
             float2 drift_offset = float2(
@@ -415,83 +648,190 @@ float4 mainImage(VertData v_in) : TARGET
             local -= drift_offset;
         }
 
-        // Aplicar gap: reduce el area util dentro de cada celda
+        // Wave: columnas de celdas se desplazan en ola senoidal
+        if (wave_amount > 0.0) {
+            float wave = sin(cell_id.x * wave_frequency * 0.3 +
+                             elapsed_time * wave_speed) * 0.2 * wave_amount;
+            local.y += wave;
+        }
+
+        // Gradiente direccional
+        float gradient_t = 0.5;
+        if (gradient_axis == 1) {
+            gradient_t = saturate(uv.x / max(aspect, 0.0001));
+        } else if (gradient_axis == 2) {
+            gradient_t = saturate(uv.y);
+        }
+
+        // Gap
         float effective_size = max(shape_size * (1.0 - gap), 0.001);
 
-        // Tamano final: base +/- variacion + pulse
+        // Tamano final: base +/- variacion + gradiente + pulse
         float size_mult = 1.0 + (rnd_size - 0.5) * 2.0 * size_variation;
+        if (gradient_axis != 0) {
+            size_mult *= (1.0 + gradient_size_amount * (gradient_t - 0.5) * 2.0);
+        }
         if (pulse_amount > 0.0) {
             float p = sin(elapsed_time * pulse_speed + rnd_phase) * 0.5 + 0.5;
             size_mult *= lerp(1.0, 0.5 + p, pulse_amount);
         }
+        size_mult = max(size_mult, 0.1);
         float final_size = max(effective_size * size_mult, 0.001);
 
-        // Rotacion final: base + auto-rotate + variacion aleatoria por celda
+        // Rotacion final
         float rot_deg = rotation_deg + auto_rotate_speed * elapsed_time;
         rot_deg += (rnd_rotation - 0.5) * 2.0 * rotation_variation;
         float rot_rad = radians(rot_deg);
 
         float2 p = rotate2D(local, -rot_rad) / final_size;
 
-        // Shape Mix: esta celda usa Shape B en vez de Shape A segun la chance
-        if (shape_mix_chance > 0.0 && rnd_shape_mix < shape_mix_chance) {
-            active_shape = shape_type_b;
+        // Hue final: variacion aleatoria + gradiente
+        float hue_final = (rnd_hue - 0.5) * hue_variation;
+        if (gradient_axis != 0) {
+            hue_final += gradient_hue_amount * gradient_t;
         }
 
-        // Image / OBS Source: no implementado
-        // if (active_shape == 7) { ... }
-        // else if (active_shape == 8) { ... }
-        // SDF shape (tambien cubre shapes 7 y 8 como fallback)
-        {
-            float d = shapeSDF(p, active_shape);
+        // Color base de esta celda (paleta de hasta 4 colores)
+        float4 cell_color = base_color;
+        if (palette_count > 1) {
+            cell_color = pickPaletteColor(rnd_hue);
+        }
+
+        // --- Image / OBS Source ---
+        if (active_shape == 7) {
+            if (image_or_source_loaded == 0) {
+                active_shape = 0;
+            } else {
+                float2 img_p = p;
+                img_p = rotate2D(img_p, radians(image_rotation));
+                img_p *= 1.0 / max(image_scale, 0.001);
+                img_p -= float2(image_offset_x, image_offset_y);
+
+                float4 img_col = sampleImage(img_p);
+
+                // Image shape mask
+                float mask = 1.0;
+                if (image_use_shape_mask) {
+                    float aa_img = max(edge_softness, 0.001) / max(final_size, 0.001);
+                    float d_mask = shapeSDF(p, image_mask_shape);
+                    mask = 1.0 - smoothstep(0.0, aa_img, d_mask);
+                }
+
+                pattern_a = img_col.a * mask * twinkle * cell_color.a;
+                pattern_rgb = img_col.rgb;
+
+                // Stroke en imagen: 8 direcciones
+                if (stroke_width > 0.0) {
+                    float sw = min(stroke_width * final_size, 0.05);
+                    float2 off = float2(sw, sw);
+
+                    float max_neighbor = 0.0;
+                    max_neighbor = max(max_neighbor, sampleImage(img_p + float2(0, off.y)).a);
+                    max_neighbor = max(max_neighbor, sampleImage(img_p + float2(0, -off.y)).a);
+                    max_neighbor = max(max_neighbor, sampleImage(img_p + float2(-off.x, 0)).a);
+                    max_neighbor = max(max_neighbor, sampleImage(img_p + float2(off.x, 0)).a);
+                    max_neighbor = max(max_neighbor, sampleImage(img_p + float2(off.x, off.y)).a);
+                    max_neighbor = max(max_neighbor, sampleImage(img_p + float2(-off.x, -off.y)).a);
+                    max_neighbor = max(max_neighbor, sampleImage(img_p + float2(off.x, -off.y)).a);
+                    max_neighbor = max(max_neighbor, sampleImage(img_p + float2(-off.x, off.y)).a);
+
+                    float edge_dist = max_neighbor - img_col.a;
+                    float img_stroke = smoothstep(0.0, 0.3, edge_dist);
+
+                    pattern_a = max(pattern_a,
+                                    img_stroke * twinkle *
+                                    cell_color.a * stroke_color.a);
+                    pattern_rgb = lerp(pattern_rgb, stroke_color.rgb,
+                                        img_stroke);
+                }
+
+                // Hue variation y color jitter
+                if (pattern_a > 0.0) {
+                    if (hue_final != 0.0) {
+                        pattern_rgb = hueShift(pattern_rgb, hue_final);
+                    }
+                    if (color_jitter > 0.0) {
+                        float3 rnd_color = float3(
+                            hash1(cell_id + seed_offset + 79.0),
+                            hash1(cell_id + seed_offset + 113.0),
+                            hash1(cell_id + seed_offset + 151.0));
+                        pattern_rgb = lerp(pattern_rgb, rnd_color, color_jitter);
+                    }
+                    pattern_rgb = applySecondaryColor(pattern_rgb, cell_local,
+                                                     cell_id, active_shape);
+                }
+            }
+        }
+
+        // --- SDF shapes ---
+        if ((active_shape >= 0 && active_shape <= 6) ||
+            (active_shape >= 8 && active_shape <= 15)) {
+
+            // SDF con blend suave o binario
+            float d;
+            if (mix_is_blend) {
+                float dA = shapeSDF(p, shape_type);
+                float dB = shapeSDF(p, shape_type_b);
+                d = lerp(dA, dB, mix_t);
+            } else {
+                d = shapeSDF(p, active_shape);
+            }
+            d_for_glow = d;
+
             float aa = max(edge_softness, 0.001) / max(final_size, 0.001);
-            float mask = 1.0 - smoothstep(0.0, aa, d);
-            pattern_a = mask * twinkle * base_color.a;
-            pattern_rgb = base_color.rgb;
-        }
+            float fill_mask = 1.0 - smoothstep(0.0, aa, d);
 
-        // Hue variation y color jitter
-        if (pattern_a > 0.0) {
-            if (hue_variation > 0.0) {
-                pattern_rgb = hueShift(pattern_rgb, (rnd_hue - 0.5) * hue_variation);
+            // Stroke: borde interior
+            float stroke_mask = 0.0;
+            if (stroke_width > 0.0) {
+                float sw = stroke_width * final_size;
+                float outer_edge = smoothstep(-sw - aa, -sw, d);
+                float inner_edge = 1.0 - smoothstep(0.0, aa, d);
+                stroke_mask = outer_edge * inner_edge;
             }
-            if (color_jitter > 0.0) {
-                // Color aleatorio por celda
-                float3 rnd_color = float3(
-                    hash1(cell_id + seed_offset + 79.0),
-                    hash1(cell_id + seed_offset + 113.0),
-                    hash1(cell_id + seed_offset + 151.0)
-                );
-                pattern_rgb = lerp(pattern_rgb, rnd_color, color_jitter);
+
+            pattern_a = max(fill_mask, stroke_mask) * twinkle * cell_color.a;
+            pattern_rgb = lerp(cell_color.rgb, stroke_color.rgb,
+                               stroke_mask);
+
+            // Hue variation y color jitter
+            if (pattern_a > 0.0) {
+                if (hue_final != 0.0) {
+                    pattern_rgb = hueShift(pattern_rgb, hue_final);
+                }
+                if (color_jitter > 0.0) {
+                    float3 rnd_color = float3(
+                        hash1(cell_id + seed_offset + 79.0),
+                        hash1(cell_id + seed_offset + 113.0),
+                        hash1(cell_id + seed_offset + 151.0));
+                    pattern_rgb = lerp(pattern_rgb, rnd_color, color_jitter);
+                }
+                pattern_rgb = applySecondaryColor(pattern_rgb, cell_local,
+                                                 cell_id, active_shape);
             }
-            pattern_rgb = applySecondaryColor(pattern_rgb, cell_local, cell_id, shape_type);
         }
     }
 
-    // Aplicar blend mode sobre la imagen base
+    // Composicion con base
     float4 result;
-    if (blend_mode == 0) {
-        // Normal: standard "over" operator
-        result.rgb = pattern_rgb * pattern_a + base.rgb * (1.0 - pattern_a);
-        result.a = pattern_a + base.a * (1.0 - pattern_a);
-    } else if (blend_mode == 1) {
-        // Add
-        result.rgb = base.rgb + pattern_rgb * pattern_a;
-        result.a = max(base.a, pattern_a);
-    } else if (blend_mode == 2) {
-        // Multiply
-        float3 mult = base.rgb * lerp(float3(1.0, 1.0, 1.0), pattern_rgb, pattern_a);
-        result.rgb = mult;
-        result.a = max(base.a, pattern_a);
-    } else if (blend_mode == 3) {
-        // Screen
-        float3 screened = 1.0 - (1.0 - base.rgb) * (1.0 - pattern_rgb * pattern_a);
-        result.rgb = screened;
-        result.a = max(base.a, pattern_a);
-    } else {
-        // Fallback: normal
-        result.rgb = pattern_rgb * pattern_a + base.rgb * (1.0 - pattern_a);
-        result.a = pattern_a + base.a * (1.0 - pattern_a);
+    result.rgb = pattern_rgb * pattern_a + base.rgb * (1.0 - pattern_a);
+    result.a = pattern_a + base.a * (1.0 - pattern_a);
+
+    // Glow
+    if (glow_amount > 0.0 && glow_radius > 0.0) {
+        float gr = max(glow_radius, 0.001);
+        float gauss = exp(-(d_for_glow * d_for_glow) / (gr * gr * 2.0));
+        result.rgb += glow_color.rgb * gauss * glow_amount * glow_color.a;
+    }
+
+    // Vignette
+    if (vignette_amount > 0.0) {
+        float2 vc = v_in.uv - 0.5;
+        float d = length(vc) * 2.0;
+        float v = 1.0 - smoothstep(vignette_size,
+                                   vignette_size + max(vignette_softness, 0.001),
+                                   d) * vignette_amount;
+        result.rgb *= v;
     }
 
     return result;
