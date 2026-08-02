@@ -35,3 +35,6 @@
 /out
 /.vs
 /.vscode/settings.json
+
+# Exclude release binaries (moved to root Releases/)
+/release/
